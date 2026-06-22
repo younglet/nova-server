@@ -131,11 +131,26 @@ handler → HTTPException → error_handler(status_code) → error_response()
 
 `mro()` 自动沿着异常类的继承链查找匹配的 error handler。
 
+### 7. 静态文件 + 请求日志（★ 框架内置）
+
+```python
+app = NovaServer(static_dir='/static', log=True)
+```
+
+- `static_dir`：启用静态文件服务（传 None 禁用），自动注册 /static/ 和 /static/<path:file> 两个路由
+- `static_path`：URL 前缀，默认 '/static'
+- `log`：默认 True，每个请求完成后打印一行 `[HH:MM:SS] METHOD /path STATUS (ms)`
+- 路径穿越防护（`_is_safe_path`） + OSError→404 + max_age=3600 全部封装在 `_mount_static()` 里
+
+用户不需要手写 `_is_safe` 、`try/except OSError`、`send_file(max_age=...)`，只需要传 `static_dir`。
+
 ## 改动会影响什么
 
 | 改这个 | 也会影响 |
 |---|---|
 | `nova_server.py` 核心路由 | 所有使用 nova-server 的 ESP32 项目 |
+| `NovaServer.__init__` 参数 | 所有示例的 app 初始化代码（static_dir / log / auto_gc） |
+| `_mount_static()` | 所有启用 static_dir 的项目 |
 | URLPattern | 所有路径参数匹配行为 |
 | Response.body_iter | 大文件传输、流式响应 |
 | `_normalize_response` | handler 返回值自动包装逻辑 |

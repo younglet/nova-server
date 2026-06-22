@@ -31,28 +31,16 @@ ESP32 文件结构：
   curl http://192.168.1.42/static/app.js
 
 注意：
-  - /static/ 路径前缀映射到 ESP32 的 /static/ 目录
-  - send_file 自动根据扩展名设置 Content-Type
-  - max_age=3600 让浏览器缓存 1 小时
+  - static_dir='/static' 一行启用静态文件服务
+  - 路径穿越防护、404 处理、Cache-Control: max-age=3600 全部框架内置
+  - 不需要手写 _is_safe_path() 或 try/except OSError
 """
 
-from nova_server import NovaServer, send_file
+from nova_server import NovaServer, redirect
 
 
-app = NovaServer()
-
-
-# ── 路径安全检查 ────────────────────────────────────────
-
-def _is_safe(path):
-    """拒绝 ../ 路径穿越攻击。"""
-    if not path:
-        return False
-    if path.startswith('/'):
-        return False
-    if '..' in path.split('/'):
-        return False
-    return True
+# ★ 一行启用：static_dir='/static' → 自动挂载 /static/ 路由
+app = NovaServer(static_dir='/static', log=True)
 
 
 # ── 路由 ────────────────────────────────────────────────
@@ -60,29 +48,20 @@ def _is_safe(path):
 @app.get('/')
 async def index(request):
     """根路径跳到 /static/。"""
-    from nova_server import redirect
     return redirect('/static/')
 
 
-@app.get('/static/')
-async def static_index(request):
-    """访问 /static/ 时返回 index.html。"""
-    return send_file('/static/index.html', max_age=3600)
-
-
-@app.get('/static/<path:filename>')
-async def serve_file(request, filename):
-    """从 /static/ 目录提供文件。
-
-    ★ 关键：先验证路径安全，再 send_file。
-    """
-    if not _is_safe(filename):
-        return {'error': 'forbidden'}, 403
-    try:
-        return send_file('/static/' + filename, max_age=3600)
-    except OSError:
-        return {'error': 'not found'}, 404
+@app.get('/api/info')
+async def info(request):
+    """运行时信息：磁盘根目录 + 平台。"""
+    import sys
+    return {
+        'www_root': app.static_dir,
+        'platform': 'micropython' if sys.implementation.name == 'micropython'
+                   else 'cpython',
+    }
 
 
 # 启动
-app.run(host='0.0.0.0', port=80)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=80)

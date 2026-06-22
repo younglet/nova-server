@@ -1,6 +1,6 @@
 """
-01_hello.py — 最简示例（3 个路由）
-===================================
+01_hello.py — 最简示例（4 个路由）
+==================================
 
 只用 17 行代码就能跑一个 Web 服务。
 
@@ -14,44 +14,55 @@
   mpremote reset
 
 测试（假设 ESP32 IP 是 192.168.1.42）：
-  curl http://192.168.1.42/              → Hello, World!
-  curl http://192.168.1.42/info          → {"server": "nova-server"}
-  curl http://192.168.1.42/time          → {"uptime_sec": 42}
+  curl http://192.168.1.42/                    → 302 → /hello/world
+  curl http://192.168.1.42/hello/Alice         → "Hello, Alice!"
+  curl http://192.168.1.42/api/version         → {"server": "nova-server", ...}
+  curl http://192.168.1.42/health              → {"status": "ok", ...}
 """
 
-from nova_server import NovaServer
+from nova_server import NovaServer, redirect
 
 
 app = NovaServer()
-_start = 0
 
 
 @app.get('/')
 async def index(request):
-    """根路径。返回纯文本。"""
-    return 'Hello, World!'
+    """根路径。重定向到 /hello/world。"""
+    return redirect('/hello/world')
 
 
-@app.get('/info')
-async def info(request):
-    """返回 JSON。dict 自动转 JSON。"""
+@app.get('/hello/<name>')
+async def hello(request, name):
+    """URL 参数示例：捕获 <name>。"""
+    return 'Hello, {}!'.format(name)
+
+
+@app.get('/api/version')
+async def api_version(request):
+    """返回服务器信息。"""
+    import sys
     return {
         'server': 'nova-server',
-        'platform': 'NovaMP',
+        'version': '0.1.0',
+        'platform': 'micropython' if sys.implementation.name == 'micropython'
+                    else 'cpython',
     }
 
 
-@app.get('/time')
-async def time(request):
-    """读启动后经过的秒数。"""
-    import time
-    if hasattr(time, 'ticks_ms'):
-        now = time.ticks_ms()
-        sec = now // 1000
-    else:
-        sec = 0
-    return {'uptime_sec': sec}
+@app.get('/health')
+async def health(request):
+    """健康检查：状态 + 内存（MicroPython 上有，CPython 上退化）。"""
+    import gc
+    info = {'platform': sys.platform if (sys := __import__('sys')) else ''}
+    try:
+        info['free'] = gc.mem_free()
+        info['allocated'] = gc.mem_alloc()
+    except AttributeError:
+        info['free'] = -1
+    return {'status': 'ok', 'memory': info}
 
 
 # 启动 server，监听 80 端口
-app.run(host='0.0.0.0', port=80)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=80)

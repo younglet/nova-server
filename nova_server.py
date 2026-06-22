@@ -10,11 +10,20 @@ try:
 except ImportError:
     import json
 
+# print_exception 跨平台兼容：
+# - MicroPython: 内置 sys.print_exception(exc)
+# - CPython: 回退到 traceback.print_exception(type, value, tb)
+try:
+    from sys import print_exception
+except ImportError:
+    import traceback as _traceback
+    def print_exception(exc):
+        _traceback.print_exception(type(exc), exc, exc.__traceback__)
+
 try:
     # CPython: 完整功能集
     from inspect import iscoroutinefunction, iscoroutine
     from functools import partial
-    from sys import print_exception
 
     async def invoke_handler(handler, *args, **kwargs):
         if iscoroutinefunction(handler):
@@ -27,10 +36,6 @@ except ImportError:
     # MicroPython: 最小兼容
     def iscoroutine(coro):
         return hasattr(coro, 'send') and hasattr(coro, 'throw')
-
-    def print_exception(exc):
-        import traceback
-        traceback.print_exc()
 
     async def invoke_handler(handler, *args, **kwargs):
         ret = handler(*args, **kwargs)
@@ -70,6 +75,18 @@ def urlencode(s):
     return s.replace('+', '%2B').replace(' ', '+').replace(
         '%', '%25').replace('?', '%3F').replace('#', '%23').replace(
             '&', '%26').replace('=', '%3D')
+
+
+def _is_safe_path(path):
+    """防路径穿越攻击（../）。
+
+    静态文件路由内部使用，外部不应直接调用。
+    """
+    if not path or path.startswith('/'):
+        return False
+    if '..' in path.split('/'):
+        return False
+    return True
 
 
 class NoCaseDict(dict):
@@ -621,9 +638,19 @@ class HTTPException(Exception):
 
 class NovaServer:
     """NovaServer - 面向 ESP32+MicroPython 的异步微型 Web 框架"""
-    def __init__(self, auto_gc=True, gc_threshold_kb=10):
+    def __init__(self, static_dir=None, static_path='/static', log=True,
+                 auto_gc=True, gc_threshold_kb=10):
         """
         参数：
+          static_dir:       静态文件目录（如 '/www'、'/static'）。
+                            传 None 禁用内置静态服务（默认 None）。
+                            启用后自动注册：
+                              GET {static_path}/             → index.html
+                              GET {static_path}/<path:file>  → 文件（含路径穿越防护）
+          static_path:      静态文件 URL 前缀（默认 '/static'）。
+                            仅在 static_dir 不为 None 时生效。
+          log:              是否在每个请求完成后打印一行访问日志（默认 True）。
+                            格式：[14:30:21] GET /api/sensors 200 (12ms)
           auto_gc:          是否在请求处理前后自动回收内存（默认 True）
           gc_threshold_kb:   剩余 heap 低于此值时触发回收（默认 10 KB）
                             设为 0 禁用；只在 MicroPython 上有效（PC 上自动跳过）
@@ -638,6 +665,44 @@ class NovaServer:
         self.server = None
         self.auto_gc = auto_gc
         self.gc_threshold = gc_threshold_kb * 1024
+        self.static_dir = static_dir
+        self.static_path = static_path
+        self.log = log
+        if static_dir:
+            self._mount_static(static_dir, static_path)
+
+    def _mount_static(self, directory, url_prefix):
+        """自动注册静态文件路由。
+
+        注册：
+          GET {url_prefix}/            → {directory}/index.html
+          GET {url_prefix}/<path:file> → {directory}/{file}（含 _is_safe_path 防护 + OSError → 404）
+
+        用户无需手写 _is_safe_path / send_file / OSError 处理。
+        """
+        static_root = directory.rstrip('/') + '/'
+        url_prefix = url_prefix.rstrip('/')
+
+        async def _serve_index(req):
+            try:
+                return send_file(static_root + 'index.html', max_age=3600)
+            except OSError:
+                return {'error': 'index.html not found'}, 404
+
+        async def _serve_file(req, filename):
+            if not _is_safe_path(filename):
+                return {'error': 'forbidden'}, 403
+            try:
+                return send_file(static_root + filename, max_age=3600)
+            except OSError:
+                return {'error': 'not found'}, 404
+
+        self.url_map.append(
+            (['GET'], URLPattern(url_prefix + '/<path:filename>'),
+             _serve_file, '', None))
+        self.url_map.append(
+            (['GET'], URLPattern(url_prefix + '/'),
+             _serve_index, '', None))
 
     def _maybe_gc(self):
         """在请求前后自动调用，剩余 heap 不足时回收。
@@ -799,32 +864,38 @@ class NovaServer:
     async def handle_request(self, reader, writer):
         # ★ 请求处理完后自动回收（释放临时变量）
         self._maybe_gc()
+        start_time = time.time()
         req = None
         try:
             req = await Request.create(self, reader, writer,
                                        writer.get_extra_info('peername'))
-        except OSError as exc:  
+        except OSError as exc:
             if exc.errno in MUTED_SOCKET_ERRORS:
                 pass
             else:
                 raise
-        except Exception as exc:  
+        except Exception as exc:
             print_exception(exc)
 
         res = await self.dispatch_request(req)
         try:
-            if res != Response.already_handled:  
+            if res != Response.already_handled:
                 await res.write(writer)
             await writer.aclose()
-        except OSError as exc:  
+        except OSError as exc:
             if exc.errno in MUTED_SOCKET_ERRORS:
                 pass
             else:
                 raise
-        if self.debug and req:  
-            print('{method} {path} {status_code}'.format(
-                method=req.method, path=req.path,
-                status_code=res.status_code))
+        if req and (self.log or self.debug):
+            try:
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                ts = time.strftime('%H:%M:%S', time.localtime())
+                print('[{}] {} {} {} ({}ms)'.format(
+                    ts, req.method, req.path,
+                    res.status_code, elapsed_ms))
+            except Exception:
+                pass
 
     def get_request_handlers(self, req, attr, local_first=True):
         handlers = getattr(self, attr + '_handlers')

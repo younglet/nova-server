@@ -9,6 +9,7 @@ test_examples.py — examples/ 目录下的示例文件测试
   4. 跨平台兼容（不依赖 CPython 独有特性）
 """
 import os
+import sys
 import json
 import pytest
 
@@ -28,6 +29,17 @@ def _load_example(name):
     ns = {'__name__': '__test__'}
     exec(compile(module_code, path, 'exec'), ns)
     return ns
+
+
+def _is_micropython():
+    """是否在 MicroPython 环境下跑。"""
+    return sys.implementation.name == 'micropython'
+
+
+# ★ ESP32 硬件示例依赖 machine 模块，PC 上跳过整个 TestSensorsExample
+_skip_sensors_on_pc = pytest.mark.skipif(
+    not _is_micropython(),
+    reason='02_sensors_api.py needs MicroPython hardware (machine)')
 
 
 # ════════════════════════════════════════════════════════════════
@@ -93,15 +105,19 @@ class TestHelloExample:
     def test_no_micro_python_only_imports(self):
         """★ 跨平台：不能 import MicroPython 独有模块。"""
         ns = _load_example('01_hello')
-        # gc 必须存在（CPython 也有），但不能调用 mem_free() 直接
-        # 这个测试用 exec 加载没报错就算过
-        assert 'gc' in ns
+        # 加载能成功即可（机器/硬件模块会让 PC 上炸）
+        assert 'app' in ns
+        # 确保没有 MicroPython 独有模块被引入
+        forbidden = {'machine', 'esp', 'esp32'}
+        for mod in forbidden:
+            assert mod not in ns
 
 
 # ════════════════════════════════════════════════════════════════
 # 02_sensors_api.py
 # ════════════════════════════════════════════════════════════════
 
+@_skip_sensors_on_pc
 class TestSensorsExample:
     def test_loads(self):
         ns = _load_example('02_sensors_api')
@@ -184,22 +200,45 @@ class TestStaticFilesExample:
     def test_loads(self):
         ns = _load_example('03_static_files')
         assert 'app' in ns
-        assert 'WWW_ROOT' in ns
 
     def test_routes_count(self):
         ns = _load_example('03_static_files')
         app = ns['app']
-        # 3 routes: /, /static/<path:path>, /api/info
-        assert len(app.url_map) >= 3
+        # 4 routes:
+        #   /                          (index redirect)
+        #   /api/info                  (运行时信息)
+        #   /static/                   (框架自动: index.html)
+        #   /static/<path:filename>    (框架自动: 文件服务)
+        assert len(app.url_map) >= 4
+
+    def test_static_dir_configured(self):
+        """★ static_dir 必须被设置成 '/static'。"""
+        ns = _load_example('03_static_files')
+        assert ns['app'].static_dir == '/static'
+        assert ns['app'].static_path == '/static'
+
+    def test_log_enabled(self):
+        """★ log 默认 True。"""
+        ns = _load_example('03_static_files')
+        assert ns['app'].log is True
 
     @pytest.mark.asyncio
     async def test_path_traversal_blocked(self):
-        """★ 安全：../ 必须返回 403。"""
+        """★ 安全：../ 必须返回 403 或 404。框架内置防护。"""
         ns = _load_example('03_static_files')
         res = await ns['app'].dispatch_request(
             _make_req(ns['app'], 'GET', '/static/../etc/passwd'))
         assert res.status_code in (403, 404)
         # 不应该返回 200 + 文件内容
+
+    @pytest.mark.asyncio
+    async def test_static_index_not_found(self):
+        """访问 /static/ 但 index.html 不存在时 → 404（框架内置处理）。"""
+        ns = _load_example('03_static_files')
+        res = await ns['app'].dispatch_request(
+            _make_req(ns['app'], 'GET', '/static/'))
+        # PC 测试环境没有 /static/index.html → 404
+        assert res.status_code == 404
 
     @pytest.mark.asyncio
     async def test_info_endpoint(self):
@@ -208,24 +247,8 @@ class TestStaticFilesExample:
             _make_req(ns['app'], 'GET', '/api/info'))
         assert res.status_code == 200
         data = json.loads(res.body)
-        assert 'www_root' in data
-        assert 'platform' in data
-
-    def test_safe_path_helper(self):
-        ns = _load_example('03_static_files')
-        safe = ns['_is_safe_path']
-        assert safe('foo/bar.html') is True
-        assert safe('../etc/passwd') is False
-        assert safe('/abs/path') is False
-        assert safe('a/../../b') is False
-
-    def test_join_path_helper(self):
-        ns = _load_example('03_static_files')
-        join = ns['_join_path']
-        assert join('a', 'b') == 'a/b'
-        assert join('a/', 'b') == 'a/b'
-        assert join('a', '/b') == 'a/b'
-        assert join('a', '', 'b') == 'a/b'
+        assert data['www_root'] == '/static'
+        assert data['platform'] in ('micropython', 'cpython')
 
 
 # ════════════════════════════════════════════════════════════════

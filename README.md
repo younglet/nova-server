@@ -30,7 +30,7 @@ if __name__ == '__main__':
 - 🎯 **MicroPython 友好** — 已在 ESP32-WROVER 4MB 实测通过，兼容 MicroPython 1.17+
 - 🧩 **API 简洁** — `@app.get/post/put/delete` 装饰器、URL 参数、JSON 自动序列化
 - 🔌 **零依赖** — 不依赖任何第三方包，纯标准库 + MicroPython 内置模块
-- 🔋 **电池包含** — 静态文件服务、Cookie、CORS（通过 headers）、错误处理、子应用挂载
+- 🔋 **电池包含** — 内置静态文件夹服务（含路径穿越防护）、请求日志、Cookie、错误处理、子应用挂载
 
 ## 📁 项目结构
 
@@ -94,6 +94,36 @@ mpremote reset
 ```
 
 ## 📖 API 速查
+
+### 静态文件服务（★ 内置）
+
+```python
+app = NovaServer(static_dir='/static')   # 一行启用静态文件服务
+
+# 自动注册路由：
+#   GET /static/              → /static/index.html
+#   GET /static/<path:file>   → /static/<file>（含路径穿越防护 + 404 处理）
+```
+
+- `static_dir`：磁盘上的目录路径，**必须显式传**才会启用
+- `static_path`：URL 前缀，默认 `/static`
+- 路径穿越、404、Cache-Control 全部框架内置，**用户无需手写任何代码**
+
+### 请求日志（★ 默认开启）
+
+```python
+app = NovaServer(log=True)   # 默认 True
+```
+
+每个请求完成后自动打印一行：
+
+```
+[14:30:21] GET /api/sensors 200 (12ms)
+[14:30:21] GET /static/style.css 200 (3ms)
+[14:30:22] GET /static/../etc 403 (1ms)
+```
+
+格式：`[时间] METHOD 路径 状态码 (耗时ms)`。设为 `log=False` 关闭。
 
 ### 路由装饰器
 
