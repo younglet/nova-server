@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+www_test/
+
+# 历史归档（迁移完成）
+_archive/
+
+# Node (VitePress)
+node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
+# 桌面生成的临时文件
+.DS_Store
+*.log
+.vscode/
+.idea/
+.env
+.env.local
+dist/
+*.tmp
+*.bak
