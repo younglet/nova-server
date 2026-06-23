@@ -29,7 +29,7 @@ export default defineConfig({
           { text: 'NovaMP 固件', link: 'https://code.stemstar.com/novamp' },
           { text: 'nova-frontend', link: 'https://github.com/' },
           { text: 'nova-server (当前)', link: '/guide/what-is-nova-server' },
-          { text: 'nova-chart', link: 'https://github.com/' },
+          { text: 'nova-chart', link: 'https://younglet.github.io/nova-chart/' },
           { text: 'Nova Animation Format (.naf)', link: 'https://github.com/' },
         ],
       },
