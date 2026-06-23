@@ -1,6 +1,10 @@
 import { defineConfig } from 'vitepress'
 
+// GitHub Pages project site uses /<repo>/ subpath; keep '/' for local dev.
+const base = process.env.GITHUB_ACTIONS ? '/nova-server/' : '/'
+
 export default defineConfig({
+  base,
   title: 'nova-server',
   description: 'MicroPython 异步 Web 框架 · 专为 NovaMP 2.0 / ESP32 设计',
   lang: 'zh-CN',
