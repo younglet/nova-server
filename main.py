@@ -129,8 +129,8 @@ async def main():
         print('[boot] WiFi failed, fallback to AP mode')
 
     gc.collect()
-    print('[boot] HTTP server @ 0.0.0.0:80')
-    await app.start_server(host='0.0.0.0', port=80, debug=False)
+    # ★ server 启动信息（含 LAN IP）由 start_server 内部打印，这里不再重复
+    await app.start_server()
 
 
 if __name__ == '__main__':

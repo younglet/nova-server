@@ -43,6 +43,40 @@ except ImportError:
             ret = await ret
         return ret
 
+
+def _detect_lan_ip():
+    """探测本机的局域网 IP，仅用于启动时打印，不影响绑定逻辑。
+
+    优先 MicroPython 风格（network.WLAN），其次 CPython UDP 探测戏法。
+    探测不到返回 None，启动打印会回退到 host（通常 0.0.0.0）。
+    """
+    # 1) MicroPython / ESP32 已连 WiFi 时
+    try:
+        import network  # noqa: F401
+        wlan = network.WLAN(network.STA_IF)  # noqa: F821
+        if wlan.isconnected():
+            ip = wlan.ifconfig()[0]
+            if ip and ip != '0.0.0.0':
+                return ip
+    except Exception:
+        pass
+
+    # 2) CPython UDP 探测：不发包，仅让内核选路由后获取本地 socket 名
+    try:
+        import socket as _socket
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        try:
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            if ip and ip != '0.0.0.0':
+                return ip
+        finally:
+            s.close()
+    except Exception:
+        pass
+
+    return None
+
 MUTED_SOCKET_ERRORS = [
     32,    # Broken pipe (UNIX)
     54,    # Connection reset by peer (UNIX)
@@ -826,8 +860,17 @@ class NovaServer:
             self.server = await asyncio.start_server(serve, host, port)
 
         # ★ 启动地址提示：server 起来后总打印，让用户立刻确认程序在线
-        print('NovaServer running on http://{host}:{port}/ (log={log}, debug={debug})'.format(
-            host=host, port=port, log=self.log, debug=debug))
+        #   优先展示 LAN IP（ESP32 连 WiFi 后是 192.168.1.x），
+        #   这样手机/电脑可以直接打开这个 URL，不需要反查设备 IP。
+        lan_ip = _detect_lan_ip()
+        if lan_ip and lan_ip != host:
+            print('NovaServer running on http://{lan_ip}:{port}/ (log={log}, debug={debug})'.format(
+                lan_ip=lan_ip, port=port, log=self.log, debug=debug))
+            print('  (listening on {host}:{port}, reachable from LAN at {lan_ip}:{port})'.format(
+                host=host, port=port, lan_ip=lan_ip))
+        else:
+            print('NovaServer running on http://{host}:{port}/ (log={log}, debug={debug})'.format(
+                host=host, port=port, log=self.log, debug=debug))
 
         while True:
             try:

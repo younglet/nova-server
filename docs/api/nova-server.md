@@ -164,10 +164,16 @@ app.run(log=False)                     # 静音模式：只打启动行
 
 不传任何参数时使用 `NovaServer()` 构造函数里设的 `host`/`port`，默认是 `0.0.0.0:80`。
 
-**启动后总会打印一行**（不管 `log` 是否打开）：
+**启动后总会打印一行**（不管 `log` 是否打开），并优先显示 LAN IP（WiFi 已连时）：
 ```
-NovaServer running on http://0.0.0.0:80/ (log=True, debug=False)
+NovaServer running on http://192.168.1.42:80/ (log=True, debug=False)
+  (listening on 0.0.0.0:80, reachable from LAN at 192.168.1.42:80)
 ```
+
+LAN IP 探测原理：
+- **MicroPython ESP32**：读 `network.WLAN(network.STA_IF).ifconfig()[0]`
+- **CPython**：用 UDP socket 探测连接 8.8.8.8（不发包，读 `getsockname()`）
+- 探测失败时回落到 host（如 `0.0.0.0`），不崩溃
 
 ### `await app.start_server(host=None, port=None, debug=False, log=None)`
 
