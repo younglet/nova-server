@@ -721,15 +721,19 @@ class NovaServer:
 
         app.run(debug=True)            # debug=True 打印每个请求日志
     """
-    def __init__(self, static_dir=None, static_path='/static',
+    def __init__(self, static_dir='/static', static_path='/static',
                  debug=False, auto_gc=False, gc_threshold_kb=50,
                  host='0.0.0.0', port=80):
         """
         参数：
           host:              默认监听地址（默认 '0.0.0.0'）
           port:              默认监听端口（默认 80，HTTP 标准）
-          static_dir:        静态文件目录，传 None 禁用（默认 None）
-          static_path:       静态文件 URL 前缀（默认 '/static'）
+          static_dir:        静态文件目录（默认 '/static'，★ 默认启用）。
+                              传 None 禁用内置静态服务。
+                              ESP32 flash 上通常会有 /static/index.html，
+                              不需要再手写 GET /static/路由。
+          static_path:       静态文件 URL 前缀（默认 '/static'）。
+                              仅 static_dir 不为 None 时生效。
           debug:             调试模式（默认 False）：
                               · True 时打印每个请求的访问日志
           auto_gc:           ★ 默认 False（ESP32 heap 碎片化时 gc.collect()
@@ -750,7 +754,7 @@ class NovaServer:
         self.static_path = static_path
         self.host = host
         self.port = port
-        if static_dir:
+        if static_dir:   # None 或 '' 禁用
             self._mount_static(static_dir, static_path)
 
     def _mount_static(self, directory, url_prefix):

@@ -70,31 +70,15 @@ def connect_wifi():
 # 路由
 # ═══════════════════════════════════════════════════════════
 
-app = NovaServer()
+app = NovaServer()                 # v0.2 起默认启用 /static/ 静态文件路由
 _boot_ms = time.ticks_ms()
 
 
 @app.get('/')
 async def index(request):
-    """首页：跳到 static/index.html。"""
+    """首页：跳到 /static/。"""
     from nova_server import redirect
     return redirect('/static/')
-
-
-@app.get('/static/')
-async def static_index(request):
-    return send_file('/static/index.html', max_age=3600)
-
-
-@app.get('/static/<path:filename>')
-async def static_file(request, filename):
-    """提供 /static/ 目录下的文件。"""
-    if '..' in filename.split('/') or filename.startswith('/'):
-        return {'error': 'forbidden'}, 403
-    try:
-        return send_file('/static/' + filename, max_age=3600)
-    except OSError:
-        return {'error': 'not found'}, 404
 
 
 @app.get('/api/info')

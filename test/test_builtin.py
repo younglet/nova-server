@@ -54,13 +54,32 @@ class TestIsSafePath:
 # ════════════════════════════════════════════════════════════════
 
 class TestStaticDirMount:
-    def test_no_static_dir_by_default(self):
-        """默认 static_dir=None → 不注册静态路由。"""
+    def test_static_dir_default_enabled(self):
+        """★ v0.2 起默认 static_dir='/static' → 默认就挂载静态路由。
+        ESP32 flash 上 /static/ 是默认文件夹，一行 app = NovaServer() 就够了。
+        """
         app = NovaServer()
+        assert app.static_dir == '/static'
+        # 应该自动注册了 /static/ 和 /static/<path:filename>
+        patterns = [p.url_pattern for _, p, *_ in app.url_map]
+        assert '/static/' in patterns
+        assert '/static/<path:filename>' in patterns
+
+    def test_disable_static_dir_with_none(self):
+        """★ 想禁用静态文件，传 static_dir=None。"""
+        app = NovaServer(static_dir=None)
         assert app.static_dir is None
-        # url_map 应该没有 /static/ 相关路由
+        # url_map 应该没有 /static 相关路由
         for methods, pattern, *_ in app.url_map:
             assert '/static' not in pattern.url_pattern
+
+    def test_custom_static_dir(self):
+        """可以传其他路径，如 NovaServer(static_dir='/www')。"""
+        app = NovaServer(static_dir='/www')
+        assert app.static_dir == '/www'
+        patterns = [p.url_pattern for _, p, *_ in app.url_map]
+        # 默认 static_path='/static'，所以 URL 前缀还是 /static/
+        assert '/static/' in patterns
 
     def test_static_dir_registers_routes(self):
         """传 static_dir 后应自动注册 2 个路由（index + file）。"""

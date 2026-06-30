@@ -22,6 +22,8 @@ app = NovaServer()
 |------|------|------|
 | `host` | `'0.0.0.0'` | 默认监听地址。`run()` / `start_server()` 不传时使用 |
 | `port` | `80` | 默认监听端口（HTTP 标准）。`run()` / `start_server()` 不传时使用 |
+| `static_dir` | `'/static'` | ★ v0.2 起默认启用。静态文件目录。传 `None` 禁用 |
+| `static_path` | `'/static'` | 静态文件 URL 前缀 |
 | `debug` | `False` | 调试模式：开则打印启动横幅 + 每个请求的访问日志 |
 | `auto_gc` | `False` | ★ ESP32 友好默认。ESP32 heap 碎片化时 `gc.collect()` 可达 1–30 秒，建议关闭。PC 有足够 RAM。手动 GC 可在 handler 里 `import gc; gc.collect()` |
 | `gc_threshold_kb` | `50` | 剩余 heap 低于此值（KB）时触发 GC。仅 `auto_gc=True` 时起作用 |

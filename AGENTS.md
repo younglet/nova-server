@@ -139,13 +139,15 @@ handler → HTTPException → error_handler(status_code) → error_response()
 
 `mro()` 自动沿着异常类的继承链查找匹配的 error handler。
 
-### 7. 静态文件 + 请求日志（★ 框架内置）
+### 7. 静态文件 + 请求日志（★ 框架内置，v0.2 默认启用）
 
 ```python
-app = NovaServer(static_dir='/static', debug=True)
+app = NovaServer()                  # 默认就启用 /static/ 静态文件路由
+app = NovaServer(static_dir=None)   # 想要禁用才显式传 None
+app = NovaServer(static_dir='/www') # 换磁盘路径
 ```
 
-- `static_dir`：启用静态文件服务（传 None 禁用），自动注册 /static/ 和 /static/<path:file> 两个路由
+- `static_dir`：默认 '/static'（v0.2 起）。ESP32 flash 上的标准文件夹。传 `None` 禁用
 - `static_path`：URL 前缀，默认 '/static'
 - `debug`：默认 False，传 True 打印每个请求日志 `[HH:MM:SS] METHOD /path STATUS (ms)`
 - 路径穿越防护（`_is_safe_path`） + OSError→404 + max_age=3600 全部封装在 `_mount_static()` 里
@@ -153,7 +155,8 @@ app = NovaServer(static_dir='/static', debug=True)
 - `gc_threshold_kb`：默认 50（开了的话阈值更宽松）
 - `host`/`port`：默认 `'0.0.0.0'`/`80`（v0.2 ESP32 一键启动不用 port=80）
 
-用户不需要手写 `_is_safe` 、`try/except OSError`、`send_file(max_age=...)`，只需要传 `static_dir`。
+用户不需要手写 `_is_safe` 、`try/except OSError`、`send_file(max_age=...)`。
+直接 `NovaServer()` 就拿到防穿越的静态文件服务。
 
 ## 改动会影响什么
 

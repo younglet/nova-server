@@ -100,19 +100,25 @@ mpremote reset
 
 ## 📖 API 速查
 
-### 静态文件服务（★ 内置）
+### 静态文件服务（★ 默认启用）
+
+v0.2 起 `static_dir='/static'` 是**默认值**：
 
 ```python
-app = NovaServer(static_dir='/static')   # 一行启用静态文件服务
+app = NovaServer()                          # ★ 默认就启用 /static/ 路由
+# 或显式写：
+app = NovaServer(static_dir='/www')         # 改磁盘路径
+app = NovaServer(static_dir=None)            # 禁用静态文件
 
-# 自动注册路由：
+# 自动注册路由（默认情况下）：
 #   GET /static/              → /static/index.html
-#   GET /static/<path:file>   → /static/<file>（含路径穿越防护 + 404 处理）
+#   GET /static/<path:file>   → /static/<file>
 ```
 
-- `static_dir`：磁盘上的目录路径，**必须显式传**才会启用
+- `static_dir`：磁盘目录路径，**默认 '/static'**。传 `None` 禁用
 - `static_path`：URL 前缀，默认 `/static`
-- 路径穿越、404、Cache-Control 全部框架内置，**用户无需手写任何代码**
+- ESP32 flash 上通常就有 `/static/index.html`，直接一行 `NovaServer()` 即可
+- 路径穿越、404、Cache-Control 全部框架内置
 
 ### 请求日志（★ 默认关闭，按需打开）
 

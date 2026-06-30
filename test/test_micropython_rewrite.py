@@ -6,6 +6,7 @@ test_micropython_rewrite.py — 验证 MicroPython 重写后的新行为
   - mount 无总数限制
   - 默认 host='0.0.0.0', port=80
   - 默认 auto_gc=False（ESP32 友好）
+  - 默认 static_dir='/static'（v0.2 起自动启用静态文件）
   - 启动 banner 使用 self.debug（不是 local 变量 debug 参数）
   - _format_hms / _format_http_date 用 tuple 格式化
   - Response.write 快路径（bytes body → 1 次 awrite）
@@ -26,8 +27,11 @@ from nova_server import (
 
 class TestRouteLimitRemoved:
     def test_register_100_routes(self):
-        """★ 重写后无 3 路由限制：可以注册 100 个。"""
-        app = NovaServer()
+        """★ 重写后无 3 路由限制：可以注册 100 个。
+        注：默认 NovaServer() 会自动挂载 2 个 /static 路由（v0.2 起）。
+        这里用 static_dir=None 排除干扰，专注测注册数量。
+        """
+        app = NovaServer(static_dir=None)
         for i in range(100):
             @app.get('/route/{i}'.format(i=i))
             async def h(req, i=i):
@@ -36,14 +40,14 @@ class TestRouteLimitRemoved:
 
     def test_register_decorator_returns_function(self):
         """route() 装饰器必须原样返回函数（不能被消费）。"""
-        app = NovaServer()
+        app = NovaServer(static_dir=None)
         async def handler(req): return 'ok'
         result = app.get('/test')(handler)
         assert result is handler
 
     def test_no_runtime_error_when_exceeds_old_limit(self):
         """超过老限制（3）也不抛 RuntimeError。"""
-        app = NovaServer()
+        app = NovaServer(static_dir=None)
         for i in range(10):  # 远超老限制 3
             def make_h(i):
                 async def h(req):
@@ -57,9 +61,9 @@ class TestRouteLimitRemoved:
 class TestMountUnlimited:
     def test_mount_large_subapps(self):
         """mount 无总数限制：主 app + 多个子 app，路由总数 > 3。"""
-        main = NovaServer()
+        main = NovaServer(static_dir=None)
         for i in range(5):
-            sub = NovaServer()
+            sub = NovaServer(static_dir=None)
             @sub.get('/sub/{}'.format(i))
             async def h(req):
                 return {'sub': i}
