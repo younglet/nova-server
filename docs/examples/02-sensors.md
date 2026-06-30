@@ -63,7 +63,7 @@ app.run(port=80)
 
 ## 测试
 
-完整文件：[examples/02_sensors_api.py](https://github.com/)
+完整文件：[examples/02_sensors_api.py](https://github.com/younglet/nova-server/blob/main/template/python/02_sensors_api.py)
 
 ## 关键点
 

@@ -4,6 +4,7 @@ import { defineConfig } from 'vitepress'
 const base = process.env.GITHUB_ACTIONS ? '/nova-server/' : '/'
 
 export default defineConfig({
+  repo: 'https://github.com/younglet/nova-server',
   base,
   title: 'nova-server',
   description: 'MicroPython 异步 Web 框架 · 专为 NovaMP 2.0 / ESP32 设计',
@@ -20,18 +21,20 @@ export default defineConfig({
   ],
 
   themeConfig: {
+    socialLinks: [{ icon: 'github', link: 'https://github.com/younglet/nova-server' }],
     siteTitle: 'nova-server',
 
     nav: [
       {
-        text: '🌟 生态',
+        text: '生态',
         items: [
-          { text: 'NovaMP 固件', link: 'https://code.stemstar.com/novamp' },
-          { text: 'nova-frontend', link: 'https://github.com/' },
-          { text: 'nova-server (当前)', link: '/guide/what-is-nova-server' },
-          { text: 'nova-chart', link: 'https://younglet.github.io/nova-chart/' },
-          { text: 'Nova Animation Format (.naf)', link: 'https://github.com/' },
-        ],
+          { text: 'novajs', link: 'https://younglet.github.io/novajs/' },
+          { text: 'Nova Style', link: 'https://younglet.github.io/nova-style/' },
+          { text: 'Nova UI', link: 'https://younglet.github.io/nova-ui/' },
+          { text: 'NovaChart', link: 'https://younglet.github.io/nova-chart/' },
+          { text: 'Nova Server', link: 'https://younglet.github.io/nova-server/' },
+          { text: 'NovaMP 固件', link: 'https://younglet.github.io/novamp/' }
+        ]
       },
       { text: '指南', link: '/guide/getting-started', activeMatch: '/guide/' },
       { text: '示例', link: '/examples/01-hello', activeMatch: '/examples/' },
@@ -98,10 +101,6 @@ export default defineConfig({
         { text: '工具函数', link: '/api/utilities' },
       ],
     },
-
-    socialLinks: [
-      { icon: 'github', link: 'https://github.com/' },
-    ],
 
     footer: {
       message: '专为 NovaMP 2.0 设计 · powered by stemstar',

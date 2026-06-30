@@ -93,7 +93,7 @@ es.onmessage = e => {
 
 多个浏览器同时打开，都会收到相同事件。
 
-完整文件：[examples/04_async_streaming.py](https://github.com/)
+完整文件：[examples/04_async_streaming.py](https://github.com/younglet/nova-server/blob/main/template/python/04_async_streaming.py)
 
 ## 关键点
 

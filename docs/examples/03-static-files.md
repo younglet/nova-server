@@ -130,7 +130,7 @@ async def sensors(request):
 
 `..` 让路径上跳，可能读到敏感文件。**必须验证**。
 
-完整文件：[examples/03_static_files.py](https://github.com/)
+完整文件：[examples/03_static_files.py](https://github.com/younglet/nova-server/blob/main/template/python/03_static_files.py)
 
 ## 下一步
 

@@ -3,7 +3,7 @@
 > **纯 MicroPython** 异步微型 Web 框架。~42KB 单文件 · 零依赖 · 专为 ESP32 优化。
 
 **nova-server** 是 [nova-frontend](..) 家族的第 5 个成员——唯一一个**后端**。
-配合 [novajs](..) / [nova-style](..) / [nova-ui](..) / [nova-chart](../nova-chart) 四件套，
+配合 [novajs](https://github.com/younglet/novajs) / [nova-style](https://github.com/younglet/nova-style) / [nova-ui](https://github.com/younglet/nova-ui) / [nova-chart](https://github.com/younglet/nova-chart) 四件套，
 在 ESP32 上提供完整的 IoT 全栈能力：嵌入式 HTTP server 在前，nova-* 前端页面在后。
 
 ```python
@@ -235,10 +235,10 @@ app.mount(admin, url_prefix='/admin')
 
 | 项目 | 职责 | 前端/后端 |
 |---|---|---|
-| [novajs](../nova-js) | 反应式内核（13KB） | 前端 |
-| [nova-style](../nova-style) | 原子 CSS 工具类（12KB） | 前端 |
-| [nova-ui](../nova-ui) | IoT 组件库（23KB CSS + 11KB JS） | 前端 |
-| [nova-chart](../nova-chart) | 极简图表库（12KB） | 前端 |
+| [novajs](https://github.com/younglet/novajs) | 反应式内核（13KB） | 前端 |
+| [nova-style](https://github.com/younglet/nova-style) | 原子 CSS 工具类（12KB） | 前端 |
+| [nova-ui](https://github.com/younglet/nova-ui) | IoT 组件库（23KB CSS + 11KB JS） | 前端 |
+| [nova-chart](https://github.com/younglet/nova-chart) | 极简图表库（12KB） | 前端 |
 | **nova-server** | **异步 Web 框架（10KB）** | **后端** |
 
 典型部署：

@@ -39,7 +39,7 @@ app.run(port=80)
 
 ## 测试
 
-完整文件：[examples/01_hello.py](https://github.com/)
+完整文件：[examples/01_hello.py](https://github.com/younglet/nova-server/blob/main/template/python/01_hello.py)
 
 ## 下一步
 
