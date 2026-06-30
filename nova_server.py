@@ -77,6 +77,32 @@ def _detect_lan_ip():
 
     return None
 
+
+# ★ MicroPython 时间格式化兼容层
+# ★ time.strftime 在 MicroPython 里不存在（完全未实现）
+#   替代方案：手动 format time.localtime() 返回的 tuple
+#   tuple 格式：(year, month, mday, hour, minute, second, weekday, yearday)
+_WDAY_ABBR = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
+_MONTH_ABBR = ('', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
+
+
+def _format_hms(t=None):
+    """格式化 HH:MM:SS。MicroPython + CPython 都能用。"""
+    if t is None:
+        t = time.localtime()
+    return '{:02d}:{:02d}:{:02d}'.format(t[3], t[4], t[5])
+
+
+def _format_http_date(t):
+    """格式化 RFC 1123 / RFC 7231 HTTP-date：
+       'Sun, 06 Nov 1994 08:49:37 GMT'
+    （用 GMT 而非 +0000 是 HTTP/1.1 要求的格式）
+    """
+    return '{wday}, {d:02d} {mon} {y:04d} {h:02d}:{m:02d}:{s:02d} GMT'.format(
+        wday=_WDAY_ABBR[t[6]], d=t[2], mon=_MONTH_ABBR[t[1]],
+        y=t[0], h=t[3], m=t[4], s=t[5])
+
 MUTED_SOCKET_ERRORS = [
     32,    # Broken pipe (UNIX)
     54,    # Connection reset by peer (UNIX)
@@ -427,9 +453,9 @@ class Response:
         if expires:
             if isinstance(expires, str):
                 http_cookie += '; Expires=' + expires
-            else:  
-                http_cookie += '; Expires=' + time.strftime(
-                    '%a, %d %b %Y %H:%M:%S GMT', expires.timetuple())
+            else:
+                # ★ MicroPython 无 time.strftime，用 _format_http_date 手动 format
+                http_cookie += '; Expires=' + _format_http_date(expires.timetuple())
         if max_age is not None:
             http_cookie += '; Max-Age=' + str(max_age)
         if secure:
@@ -889,15 +915,16 @@ class NovaServer:
         # ★ 启动地址提示：server 起来后总打印，让用户立刻确认程序在线
         #   优先展示 LAN IP（ESP32 连 WiFi 后是 192.168.1.x），
         #   这样手机/电脑可以直接打开这个 URL，不需要反查设备 IP。
+        #   注意：banner 用 self.debug 而不是本地参数 debug，反映真实生效的开关
         lan_ip = _detect_lan_ip()
         if lan_ip and lan_ip != host:
             print('NovaServer running on http://{lan_ip}:{port}/ (debug={debug})'.format(
-                lan_ip=lan_ip, port=port, debug=debug))
+                lan_ip=lan_ip, port=port, debug=self.debug))
             print('  (listening on {host}:{port}, reachable from LAN at {lan_ip}:{port})'.format(
                 host=host, port=port, lan_ip=lan_ip))
         else:
             print('NovaServer running on http://{host}:{port}/ (debug={debug})'.format(
-                host=host, port=port, debug=debug))
+                host=host, port=port, debug=self.debug))
 
         while True:
             try:
@@ -986,13 +1013,15 @@ class NovaServer:
                 raise
         if req and self.debug:
             try:
+                # ★ MicroPython 无 time.strftime，用 _format_hms 手动 format
                 elapsed_ms = int((time.time() - start_time) * 1000)
-                ts = time.strftime('%H:%M:%S', time.localtime())
+                ts = _format_hms()
                 print('[{}] {} {} {} ({}ms)'.format(
                     ts, req.method, req.path,
                     res.status_code, elapsed_ms))
-            except Exception:
-                pass
+            except Exception as exc:
+                # 别静默吞掉：MicroPython 不兼容时打印出来方便调试
+                print('[nova-server debug log error]', exc)
 
     def get_request_handlers(self, req, attr, local_first=True):
         handlers = getattr(self, attr + '_handlers')

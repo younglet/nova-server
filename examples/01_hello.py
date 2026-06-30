@@ -23,7 +23,7 @@
 from nova_server import NovaServer, redirect
 
 
-app = NovaServer()
+app = NovaServer(debug=True)
 
 
 @app.get('/')
@@ -66,3 +66,5 @@ async def health(request):
 # 启动 server，监听 80 端口
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=80)
+    # ★ 不显式传 debug → 沿用 NovaServer(debug=True)，每个请求都会打一行：
+    #   [14:30:21] GET /hello/world 200 (5ms)
