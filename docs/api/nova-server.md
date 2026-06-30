@@ -2,6 +2,8 @@
 
 主类。管理所有路由、钩子、错误处理。
 
+> **v0.2 起纯 MicroPython**：框架代码不再为 CPython 提供兼容分支（仅保留测试用 `print_exception` shim）。生产请用 ESP32 / NovaMP 设备。
+
 ## 导入
 
 ```python

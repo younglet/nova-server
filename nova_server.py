@@ -1,118 +1,73 @@
-# NOTE: MicroPython 没有 __future__ 模块，所以这行已移除（CPython 注释风格的类型注解仍能正常工作）。
+# nova_server.py — 纯 MicroPython 异步微型 Web 框架
+# ────────────────────────────────────────────────────────────────
+# 设计目标：
+#   · 只跑 MicroPython（ESP32 / NovaMP 固件），砍掉所有 CPython 兼容
+#   · 路由无限个、无子应用挂载限制
+#   · 关键热路径用 bytearray / .awrite 单次发送，避免 GC 抖动
+#   · 启动时打印 LAN IP，便于同局域网设备直连
+# ────────────────────────────────────────────────────────────────
 
 import asyncio
 import io
 import re
 import time
 
-try:
-    import orjson as json
-except ImportError:
-    import json
+import json
 
-# print_exception 跨平台兼容：
-# - MicroPython: 内置 sys.print_exception(exc)
-# - CPython: 回退到 traceback.print_exception(type, value, tb)
+
+# ★ invoke_handler：纯 MicroPython，不再 try/except 兜底 inspect/functools
+def iscoroutine(coro):
+    return hasattr(coro, 'send') and hasattr(coro, 'throw')
+
+
+async def invoke_handler(handler, *args, **kwargs):
+    """直接 await handler；同步函数会被 asyncio 调起（用户应写 async）。"""
+    ret = handler(*args, **kwargs)
+    if iscoroutine(ret):
+        ret = await ret
+    return ret
+
+
+# ★ MicroPython 内置 sys.print_exception；CPython 没这个，就用 traceback
+#   唯一一个 PC 兼容 shim（方便在 PC 上跑 pytest，其它全砍）
 try:
     from sys import print_exception
 except ImportError:
-    import traceback as _traceback
+    import traceback as _tb
     def print_exception(exc):
-        _traceback.print_exception(type(exc), exc, exc.__traceback__)
-
-try:
-    # CPython: 完整功能集
-    from inspect import iscoroutinefunction, iscoroutine
-    from functools import partial
-
-    async def invoke_handler(handler, *args, **kwargs):
-        if iscoroutinefunction(handler):
-            ret = await handler(*args, **kwargs)
-        else:
-            ret = await asyncio.get_running_loop().run_in_executor(
-                None, partial(handler, *args, **kwargs))
-        return ret
-except ImportError:
-    # MicroPython: 最小兼容
-    def iscoroutine(coro):
-        return hasattr(coro, 'send') and hasattr(coro, 'throw')
-
-    async def invoke_handler(handler, *args, **kwargs):
-        ret = handler(*args, **kwargs)
-        if iscoroutine(ret):
-            ret = await ret
-        return ret
+        _tb.print_exception(type(exc), exc, exc.__traceback__)
 
 
-def _detect_lan_ip():
-    """探测本机的局域网 IP，仅用于启动时打印，不影响绑定逻辑。
-
-    优先 MicroPython 风格（network.WLAN），其次 CPython UDP 探测戏法。
-    探测不到返回 None，启动打印会回退到 host（通常 0.0.0.0）。
-    """
-    # 1) MicroPython / ESP32 已连 WiFi 时
-    try:
-        import network  # noqa: F401
-        wlan = network.WLAN(network.STA_IF)  # noqa: F821
-        if wlan.isconnected():
-            ip = wlan.ifconfig()[0]
-            if ip and ip != '0.0.0.0':
-                return ip
-    except Exception:
-        pass
-
-    # 2) CPython UDP 探测：不发包，仅让内核选路由后获取本地 socket 名
-    try:
-        import socket as _socket
-        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-        try:
-            s.connect(('8.8.8.8', 80))
-            ip = s.getsockname()[0]
-            if ip and ip != '0.0.0.0':
-                return ip
-        finally:
-            s.close()
-    except Exception:
-        pass
-
-    return None
+# ── 静音 socket 错误码：MicroPython 上 ESP32 只有这几个 ──
+MUTED_SOCKET_ERRORS = [
+    32,    # Broken pipe (UNIX)
+    54,    # Connection reset by peer (UNIX)
+    104,   # Connection reset by peer (Linux)
+    128,   # Network dropped connection (Linux)
+]
 
 
-# ★ MicroPython 时间格式化兼容层
-# ★ time.strftime 在 MicroPython 里不存在（完全未实现）
-#   替代方案：手动 format time.localtime() 返回的 tuple
-#   tuple 格式：(year, month, mday, hour, minute, second, weekday, yearday)
+# ── 时间格式化（MicroPython 没 time.strftime） ──
 _WDAY_ABBR = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
 _MONTH_ABBR = ('', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
 
 
 def _format_hms(t=None):
-    """格式化 HH:MM:SS。MicroPython + CPython 都能用。"""
+    """HH:MM:SS — 替代 MicroPython 上没有的 time.strftime('%H:%M:%S', ...)"""
     if t is None:
         t = time.localtime()
     return '{:02d}:{:02d}:{:02d}'.format(t[3], t[4], t[5])
 
 
 def _format_http_date(t):
-    """格式化 RFC 1123 / RFC 7231 HTTP-date：
-       'Sun, 06 Nov 1994 08:49:37 GMT'
-    （用 GMT 而非 +0000 是 HTTP/1.1 要求的格式）
-    """
+    """RFC 1123 / RFC 7231 HTTP-date，set_cookie 的 Expires 用。"""
     return '{wday}, {d:02d} {mon} {y:04d} {h:02d}:{m:02d}:{s:02d} GMT'.format(
         wday=_WDAY_ABBR[t[6]], d=t[2], mon=_MONTH_ABBR[t[1]],
         y=t[0], h=t[3], m=t[4], s=t[5])
 
-MUTED_SOCKET_ERRORS = [
-    32,    # Broken pipe (UNIX)
-    54,    # Connection reset by peer (UNIX)
-    104,   # Connection reset by peer (Linux)
-    128,   # Network dropped connection (Linux)
-    10053, # Software caused connection abort (Windows)
-    10054, # Connection reset by peer (Windows)
-]
 
-
+# ── URL 解码 ──
 def urldecode(s):
     if isinstance(s, str):
         s = s.encode()
@@ -137,11 +92,9 @@ def urlencode(s):
             '&', '%26').replace('=', '%3D')
 
 
+# ── 静态文件路径穿越防护 ──
 def _is_safe_path(path):
-    """防路径穿越攻击（../）。
-
-    静态文件路由内部使用，外部不应直接调用。
-    """
+    """防 ../ 路径穿越。"""
     if not path or path.startswith('/'):
         return False
     if '..' in path.split('/'):
@@ -149,7 +102,29 @@ def _is_safe_path(path):
     return True
 
 
+# ── LAN IP 探测（仅 MicroPython，不再有 CPython UDP 探测分支） ──
+def _detect_lan_ip():
+    """通过 network.WLAN(STA_IF) 拿 ESP32 的局域网 IP。
+    仅 MicroPython 返回；未连 WiFi 返回 None。
+    """
+    try:
+        import network
+        wlan = network.WLAN(network.STA_IF)
+        if wlan.isconnected():
+            ip = wlan.ifconfig()[0]
+            if ip and ip != '0.0.0.0':
+                return ip
+    except Exception:
+        pass
+    return None
+
+
+# ════════════════════════════════════════════════════════════════
+# 基础数据结构
+# ════════════════════════════════════════════════════════════════
+
 class NoCaseDict(dict):
+    """大小写不敏感的 dict（HTTP header 用）。"""
     def __init__(self, initial_dict=None):
         super().__init__(initial_dict or {})
         self.keymap = {k.lower(): k for k in self.keys() if k.lower() != k}
@@ -183,15 +158,26 @@ class NoCaseDict(dict):
 
 
 def mro(cls):
-    """
-    获取类的 MRO（Method Resolution Order）。
-    MicroPython 1.17+ 和 CPython 都支持 cls.__mro__。
-    返回列表，兼容旧版 MicroPython。
-    """
-    return cls.__mro__ if hasattr(cls, '__mro__') else [cls]
+    """类的 MRO。优先 cls.__mro__，无则用 __bases__ 手动遍历（兼容旧 MP）。"""
+    if hasattr(cls, '__mro__'):
+        return cls.__mro__
+    # 兼容没有 __mro__ 的 MicroPython 旧版本
+    def _mro(cls):
+        m = [cls]
+        for base in cls.__bases__:
+            m += _mro(base)
+        return m
+    mro_list = _mro(cls)
+    mro_pruned = []
+    for i in range(len(mro_list)):
+        base = mro_list.pop(0)
+        if base not in mro_list:
+            mro_pruned.append(base)
+    return mro_pruned
 
 
 class MultiDict(dict):
+    """同 key 多值的 dict（query string / form 用）。"""
     def __init__(self, initial_dict=None):
         super().__init__()
         if initial_dict:
@@ -224,36 +210,41 @@ class MultiDict(dict):
 
 
 class AsyncBytesIO:
+    """把同步 io.BytesIO 包成异步接口（MicroPython 上 Stream 接口不一定有）。"""
     def __init__(self, data):
         self.stream = io.BytesIO(data)
 
     async def read(self, n=-1):
         return self.stream.read(n)
 
-    async def readline(self):  
+    async def readline(self):
         return self.stream.readline()
 
-    async def readexactly(self, n):  
+    async def readexactly(self, n):
         return self.stream.read(n)
 
-    async def readuntil(self, separator=b'\n'):  
+    async def readuntil(self, separator=b'\n'):
         return self.stream.readuntil(separator=separator)
 
-    async def awrite(self, data):  
+    async def awrite(self, data):
         return self.stream.write(data)
 
-    async def aclose(self):  
+    async def aclose(self):
         pass
 
 
+# ════════════════════════════════════════════════════════════════
+# Request
+# ════════════════════════════════════════════════════════════════
+
 class Request:
-    """HTTP 请求对象。自动解析 URL、查询参数、headers、cookies、JSON body、表单。"""
+    """HTTP 请求对象。"""
     max_content_length = 16 * 1024
     max_body_length = 16 * 1024
     max_readline = 2 * 1024
 
     class G:
-        """请求级全局对象容器，可在 before_request 中注入共享数据。"""
+        """请求级全局对象容器。"""
         pass
 
     def __init__(self, app, client_addr, method, url, http_version, headers,
@@ -299,14 +290,12 @@ class Request:
 
     @staticmethod
     async def create(app, client_reader, client_writer, client_addr):
-        
         line = (await Request._safe_readline(client_reader)).strip().decode()
-        if not line:  
+        if not line:
             return None
         method, url, http_version = line.split()
         http_version = http_version.split('/', 1)[1]
 
-        
         headers = NoCaseDict()
         content_length = 0
         while True:
@@ -320,7 +309,6 @@ class Request:
             if header.lower() == 'content-length':
                 content_length = int(value)
 
-        
         body = b''
         if content_length and content_length <= Request.max_body_length:
             body = await client_reader.readexactly(content_length)
@@ -335,13 +323,13 @@ class Request:
 
     def _parse_urlencoded(self, urlencoded):
         data = MultiDict()
-        if len(urlencoded) > 0:  
+        if len(urlencoded) > 0:
             if isinstance(urlencoded, str):
                 for kv in [pair.split('=', 1)
                            for pair in urlencoded.split('&') if pair]:
                     data[urldecode(kv[0])] = urldecode(kv[1]) \
                         if len(kv) > 1 else ''
-            elif isinstance(urlencoded, bytes):  
+            elif isinstance(urlencoded, bytes):
                 for kv in [pair.split(b'=', 1)
                            for pair in urlencoded.split(b'&') if pair]:
                     data[urldecode(kv[0])] = urldecode(kv[1]) \
@@ -396,9 +384,12 @@ class Request:
         return line
 
 
+# ════════════════════════════════════════════════════════════════
+# Response
+# ════════════════════════════════════════════════════════════════
+
 class Response:
-    """HTTP 响应对象。支持字符串/bytes/异步生成器/file 对象作为 body。
-    构造时自动判断类型：dict/list 转为 JSON，str 转为 UTF-8 bytes。"""
+    """HTTP 响应对象。支持字符串/bytes/异步生成器/file 对象作为 body。"""
     types_map = {
         'css': 'text/css',
         'gif': 'image/gif',
@@ -413,16 +404,10 @@ class Response:
 
     send_file_buffer_size = 1024
 
-    
-    
     default_content_type = 'text/plain'
 
-    
-    
     default_send_file_max_age = None
 
-    
-    
     already_handled = None
 
     def __init__(self, body='', status_code=200, headers=None, reason=None):
@@ -438,7 +423,6 @@ class Response:
         if isinstance(body, str):
             self.body = body.encode()
         else:
-            
             self.body = body
         self.is_head = False
 
@@ -454,8 +438,9 @@ class Response:
             if isinstance(expires, str):
                 http_cookie += '; Expires=' + expires
             else:
-                # ★ MicroPython 无 time.strftime，用 _format_http_date 手动 format
-                http_cookie += '; Expires=' + _format_http_date(expires.timetuple())
+                # ★ 不再 time.strftime（MicroPython 不存在）
+                http_cookie += '; Expires=' + _format_http_date(
+                    expires.timetuple())
         if max_age is not None:
             http_cookie += '; Max-Age=' + str(max_age)
         if secure:
@@ -485,11 +470,8 @@ class Response:
                 self.headers['Content-Type'] += '; charset=UTF-8'
 
     def _build_head(self):
-        """把状态行 + headers + 空行合成一个 bytes，单次发送。
-
-        优化点（ESP32 上重要）：
-          · 避免每行 header 都 str.format().encode() + awrite
-          · 一次 awrite 取代多次 syscalls，WiFi 下能省每行 1-5ms
+        """把所有 headers 拼成一个 bytes，单次发送。
+        ESP32 上每次 awrite ≈ 1-3ms WiFi 开销，少 N-1 次 = 关键性能点。
         """
         reason = self.reason if self.reason is not None else \
             ('OK' if self.status_code == 200 else 'N/A')
@@ -498,8 +480,7 @@ class Response:
         for header, value in self.headers.items():
             values = value if isinstance(value, list) else [value]
             for v in values:
-                parts.append('{h}: {v}\r\n'.format(
-                    h=header, v=v).encode())
+                parts.append('{h}: {v}\r\n'.format(h=header, v=v).encode())
         parts.append(b'\r\n')
         return b''.join(parts)
 
@@ -511,27 +492,24 @@ class Response:
             body = self.body
 
             # ★ 快路径（最常见）：手头已有 bytes/str body
-            #   直接一次 awrite 拼 head + body。microPython StreamWriter.drain()
-            #   会等发送缓冲区空，所以不用我们自己手动 chunk + 反压控制。
+            #   head + body 一次 awrite 拼出发，避免 N 个 syscalls
             fast = (
                 not self.is_head
                 and isinstance(body, (bytes, bytearray))
-                and not hasattr(body, '__anext__')   # 不是 async gen
-                and not hasattr(body, 'read')         # 不是 file-like
-                and not hasattr(body, '__next__')      # 不是 sync gen
+                and not hasattr(body, '__anext__')
+                and not hasattr(body, 'read')
+                and not hasattr(body, '__next__')
             )
             if fast:
                 total = len(head) + len(body)
-                if total <= 16 * 1024:   # ≤16KB → 一次 send
+                if total <= 16 * 1024:
                     await stream.awrite(head + body)
                 else:
-                    # 大块但仍是内存里的字节 → 分两次，避免 VFS 紧张
                     await stream.awrite(head)
                     await stream.awrite(body)
             else:
                 await stream.awrite(head)
                 if not self.is_head:
-                    # 慢路径：file / generator / async iter，保持原 chunked 逻辑
                     iter_obj = self.body_iter()
                     async for chunk in iter_obj:
                         if isinstance(chunk, str):
@@ -547,7 +525,7 @@ class Response:
                     if hasattr(iter_obj, 'aclose'):
                         await iter_obj.aclose()
 
-        except OSError as exc:  
+        except OSError as exc:
             if exc.errno in MUTED_SOCKET_ERRORS or \
                     exc.args[0] == 'Connection lost':
                 pass
@@ -556,7 +534,6 @@ class Response:
 
     def body_iter(self):
         if hasattr(self.body, '__anext__'):
-            
             return self.body
 
         response = self
@@ -569,7 +546,7 @@ class Response:
 
             def __aiter__(self):
                 if response.body:
-                    self.i = self.ITER_UNKNOWN  
+                    self.i = self.ITER_UNKNOWN
                 else:
                     self.i = self.ITER_NO_BODY
                 return self
@@ -594,7 +571,7 @@ class Response:
                         await self.aclose()
                         raise StopAsyncIteration
                 buf = response.body.read(response.send_file_buffer_size)
-                if iscoroutine(buf):  
+                if iscoroutine(buf):
                     buf = await buf
                 if len(buf) < response.send_file_buffer_size:
                     self.i = self.ITER_NO_BODY
@@ -603,7 +580,7 @@ class Response:
             async def aclose(self):
                 if hasattr(response.body, 'close'):
                     result = response.body.close()
-                    if iscoroutine(result):  
+                    if iscoroutine(result):
                         await result
 
         return iter()
@@ -642,8 +619,12 @@ class Response:
         return cls(body=f, status_code=status_code, headers=headers)
 
 
-class URLPattern():
-    """URL 模式匹配器。支持 <name>, <int:name>, <path:name>, <re:...> 语法。"""
+# ════════════════════════════════════════════════════════════════
+# URLPattern
+# ════════════════════════════════════════════════════════════════
+
+class URLPattern:
+    """URL 模式匹配。支持 <name>, <int:name>, <path:name>, <re:...>。"""
     segment_patterns = {
         'string': '/([^/]+)',
         'int': '/(-?\\d+)',
@@ -709,52 +690,51 @@ class URLPattern():
             i += 1
         return args
 
-    def __repr__(self):  
+    def __repr__(self):
         return 'URLPattern: {}'.format(self.url_pattern)
 
 
 class HTTPException(Exception):
-    """可中断请求处理流程并返回指定 HTTP 状态码的异常。
-    配合 abort() 使用，会被 dispatch_request 捕获并转为错误响应。"""
+    """可中断请求处理并返回指定状态码的异常。"""
     def __init__(self, status_code, reason=None):
         self.status_code = status_code
         self.reason = reason or str(status_code) + ' error'
 
-    def __repr__(self):  
+    def __repr__(self):
         return 'HTTPException: {}'.format(self.status_code)
 
 
+# ════════════════════════════════════════════════════════════════
+# 主类 NovaServer
+# ════════════════════════════════════════════════════════════════
+
 class NovaServer:
-    """NovaServer - 面向 ESP32+MicroPython 的异步微型 Web 框架"""
+    """NovaServer — MicroPython 异步微型 Web 框架。
+
+    用法：
+        from nova_server import NovaServer, send_file, redirect, abort
+
+        app = NovaServer()             # 默认 host=0.0.0.0, port=80
+        @app.get('/led/<name>')
+        async def handler(req, name):
+            return {'led': name}
+
+        app.run(debug=True)            # debug=True 打印每个请求日志
+    """
     def __init__(self, static_dir=None, static_path='/static',
                  debug=False, auto_gc=False, gc_threshold_kb=50,
                  host='0.0.0.0', port=80):
         """
         参数：
-          host:              默认监听地址（默认 '0.0.0.0'）。
-                            传给 run() / start_server() 时如不显式指定则使用此值。
-          port:              默认监听端口（默认 80，对应 HTTP 标准端口）。
-                            传给 run() / start_server() 时如不显式指定则使用此值。
-          static_dir:       静态文件目录（如 '/www'、'/static'）。
-                            传 None 禁用内置静态服务（默认 None）。
-                            启用后自动注册：
-                              GET {static_path}/             → index.html
-                              GET {static_path}/<path:file>  → 文件（含路径穿越防护）
-          static_path:      静态文件 URL 前缀（默认 '/static'）。
-                            仅在 static_dir 不为 None 时生效。
-          debug:            是否启用调试模式（默认 False）：
-                              · 在 start_server 前打印 'Starting async server on ...'
-                              · 每个请求完成后打印一行访问日志：
-                                [14:30:21] GET /api/sensors 200 (12ms)
-          auto_gc:          ★ 默认 False。
-                            ESP32 heap 碎片化时 gc.collect() 可达 1-30 秒
-                            （几乎必触发 WDT 超时），默认关闭避免偶发卡顿。
-                            PC 上 RAM 足够，无需 GC。
-                            如需打开：NovaServer(auto_gc=True, gc_threshold_kb=...)
-          gc_threshold_kb:   剩余 heap 低于此值时触发回收（默认 50 KB）。
-                            仅 auto_gc=True 时起作用。设为 0 禁用触发阈值。
-                            默认从旧版 10 KB 提升到 50 KB，避免频繁 GC。
-                            在 MicroPython 上有效（PC 上 _maybe_gc 自动跳过）。
+          host:              默认监听地址（默认 '0.0.0.0'）
+          port:              默认监听端口（默认 80，HTTP 标准）
+          static_dir:        静态文件目录，传 None 禁用（默认 None）
+          static_path:       静态文件 URL 前缀（默认 '/static'）
+          debug:             调试模式（默认 False）：
+                              · True 时打印每个请求的访问日志
+          auto_gc:           ★ 默认 False（ESP32 heap 碎片化时 gc.collect()
+                              可能 1-30 秒）。需要时手动在 handler 里 gc.collect()
+          gc_threshold_kb:   heap 阈值（默认 50 KB），仅 auto_gc=True 起作用
         """
         self.url_map = []
         self.before_request_handlers = []
@@ -764,7 +744,7 @@ class NovaServer:
         self.options_handler = self.default_options_handler
         self.debug = bool(debug)
         self.server = None
-        self.auto_gc = auto_gc
+        self.auto_gc = bool(auto_gc)
         self.gc_threshold = gc_threshold_kb * 1024
         self.static_dir = static_dir
         self.static_path = static_path
@@ -775,12 +755,9 @@ class NovaServer:
 
     def _mount_static(self, directory, url_prefix):
         """自动注册静态文件路由。
-
         注册：
-          GET {url_prefix}/            → {directory}/index.html
-          GET {url_prefix}/<path:file> → {directory}/{file}（含 _is_safe_path 防护 + OSError → 404）
-
-        用户无需手写 _is_safe_path / send_file / OSError 处理。
+          GET {url_prefix}/             → {directory}/index.html
+          GET {url_prefix}/<path:file>  → {directory}/{file}
         """
         static_root = directory.rstrip('/') + '/'
         url_prefix = url_prefix.rstrip('/')
@@ -807,18 +784,18 @@ class NovaServer:
              _serve_index, '', None))
 
     def _maybe_gc(self):
-        """在请求前后自动调用，剩余 heap 不足时回收。
-        PC 上 gc.mem_free() 不存在，自动跳过。"""
+        """请求处理前后调用。auto_gc=False 时直接返回，不调 import gc。"""
         if not self.auto_gc or self.gc_threshold <= 0:
             return
         try:
             import gc
             if gc.mem_free() < self.gc_threshold:
                 gc.collect()
-        except (AttributeError, ImportError):
+        except (ImportError,):
             pass
 
     def route(self, url_pattern, methods=None):
+        """注册路由。无限个（不再有 3 路由限制）。"""
         def decorated(f):
             self.url_map.append(
                 ([m.upper() for m in (methods or ['GET'])],
@@ -826,15 +803,20 @@ class NovaServer:
             return f
         return decorated
 
-    def get(self, url_pattern):return self.route(url_pattern, methods=['GET'])
+    def get(self, url_pattern):
+        return self.route(url_pattern, methods=['GET'])
 
-    def post(self, url_pattern):return self.route(url_pattern, methods=['POST'])
+    def post(self, url_pattern):
+        return self.route(url_pattern, methods=['POST'])
 
-    def put(self, url_pattern):return self.route(url_pattern, methods=['PUT'])
+    def put(self, url_pattern):
+        return self.route(url_pattern, methods=['PUT'])
 
-    def patch(self, url_pattern):return self.route(url_pattern, methods=['PATCH'])
+    def patch(self, url_pattern):
+        return self.route(url_pattern, methods=['PATCH'])
 
-    def delete(self, url_pattern):return self.route(url_pattern, methods=['DELETE'])
+    def delete(self, url_pattern):
+        return self.route(url_pattern, methods=['DELETE'])
 
     def before_request(self, f):
         self.before_request_handlers.append(f)
@@ -855,6 +837,7 @@ class NovaServer:
         return decorated
 
     def mount(self, subapp, url_prefix='', local=False):
+        """挂载子应用。无限个，无总数限制。"""
         for methods, pattern, handler, _prefix, _subapp in subapp.url_map:
             self.url_map.append(
                 (methods, URLPattern(url_prefix + pattern.url_pattern),
@@ -875,25 +858,22 @@ class NovaServer:
 
     @staticmethod
     def abort(status_code, reason=None):
-        
         raise HTTPException(status_code, reason)
 
-    async def start_server(self, host=None, port=None, debug=None,
-                           ssl=None):
-        """异步启动。
-        host/port/debug 不传时回退到 __init__ 设置的 self.host/self.port/debug。
-        ★ 关键：debug 默认是 None 也不是 False，以免覆盖 NovaServer(debug=...) 的设置。
+    async def start_server(self, host=None, port=None, debug=None, ssl=None):
+        """异步启动 server。
+        host/port/debug 不传时回退到 self.host / self.port / self.debug。
         """
         if host is None:
             host = self.host
         if port is None:
             port = self.port
-        if debug is not None:   # 只在显式传时才覆盖
+        if debug is not None:
             self.debug = bool(debug)
 
         async def serve(reader, writer):
-            if not hasattr(writer, 'awrite'):  
-                
+            if not hasattr(writer, 'awrite'):
+                # 旧版 MicroPython StreamWriter 没有 awrite/aclose，包装一下
                 async def awrite(self, data):
                     self.write(data)
                     await self.drain()
@@ -908,20 +888,17 @@ class NovaServer:
 
             await self.handle_request(reader, writer)
 
-        if self.debug:  
+        if self.debug:
             print('Starting async server on {host}:{port}...'.format(
                 host=host, port=port))
 
         try:
             self.server = await asyncio.start_server(serve, host, port,
                                                      ssl=ssl)
-        except TypeError:  
+        except TypeError:
             self.server = await asyncio.start_server(serve, host, port)
 
-        # ★ 启动地址提示：server 起来后总打印，让用户立刻确认程序在线
-        #   优先展示 LAN IP（ESP32 连 WiFi 后是 192.168.1.x），
-        #   这样手机/电脑可以直接打开这个 URL，不需要反查设备 IP。
-        #   注意：banner 用 self.debug 而不是本地参数 debug，反映真实生效的开关
+        # ★ 启动 banner：总是打，让用户立刻确认 server 在线
         lan_ip = _detect_lan_ip()
         if lan_ip and lan_ip != host:
             print('NovaServer running on http://{lan_ip}:{port}/ (debug={debug})'.format(
@@ -934,25 +911,19 @@ class NovaServer:
 
         while True:
             try:
-                if hasattr(self.server, 'serve_forever'):  
+                if hasattr(self.server, 'serve_forever'):
                     try:
                         await self.server.serve_forever()
                     except asyncio.CancelledError:
                         pass
                 await self.server.wait_closed()
                 break
-            except AttributeError:  
-                
-                
+            except AttributeError:
+                # MicroPython 没 serve_forever，靠 sleep 阻塞
                 await asyncio.sleep(0.1)
 
     def run(self, host=None, port=None, debug=None, ssl=None):
-        """同步入口。参数不传时使用 __init__ 设置的 self.host / self.port / self.debug。
-
-        debug=None（默认）→ 用 NovaServer(debug=...) 的设置；
-                True    → 明确打开请求日志；
-                False   → 明确关闭请求日志。
-        """
+        """同步入口。参数不传时使用 __init__ 设置的 self.host/self.port/self.debug。"""
         asyncio.run(self.start_server(host=host, port=port, debug=debug,
                                       ssl=ssl))
 
@@ -992,9 +963,9 @@ class NovaServer:
         return {'Allow': ', '.join(allow)}
 
     async def handle_request(self, reader, writer):
-        # ★ 请求处理完后自动回收（释放临时变量）
+        # ★ 进请求前堆检查（auto_gc=False 时几乎不开销）
         self._maybe_gc()
-        start_time = time.time()
+        start_ms = time.ticks_ms()   # ★ 单调时钟，比 time.time() 更准
         req = None
         try:
             req = await Request.create(self, reader, writer,
@@ -1017,16 +988,16 @@ class NovaServer:
                 pass
             else:
                 raise
+        # ★ 请求日志：debug=True 才打
         if req and self.debug:
             try:
-                # ★ MicroPython 无 time.strftime，用 _format_hms 手动 format
-                elapsed_ms = int((time.time() - start_time) * 1000)
+                elapsed_ms = time.ticks_diff(time.ticks_ms(), start_ms)
+                # ★ _format_hms：MicroPython 兼容版 strftime
                 ts = _format_hms()
                 print('[{}] {} {} {} ({}ms)'.format(
                     ts, req.method, req.path,
                     res.status_code, elapsed_ms))
             except Exception as exc:
-                # 别静默吞掉：MicroPython 不兼容时打印出来方便调试
                 print('[nova-server debug log error]', exc)
 
     def get_request_handlers(self, req, attr, local_first=True):
@@ -1044,45 +1015,7 @@ class NovaServer:
             return await invoke_handler(self.error_handlers[status_code], req)
         return reason or 'N/A', status_code
 
-    @staticmethod
-    def _normalize_response(res):
-        """
-        将 handler 返回值统一转为 Response 对象。
-        支持多种返回格式：
-          - Response 对象：直接返回
-          - (body, status_code) 元组：自动包装
-          - (body, status_code, headers) 元组
-          - (body, headers) 元组：status_code 默认为 200
-          - 整数：视为状态码，空 body
-          - dict / list：作为 body 传给 Response，触发 JSON 自动序列化
-          - 其他（str/bytes）：作为 body 传给 Response
-
-        ★ 注意：之前 dict 被当作 headers 是错的（dict-as-headers 仅用于 OPTIONS
-          处理器，那个分支由 dispatch_request 单独处理，这里不应再吃 dict）。
-        """
-        if isinstance(res, Response):
-            return res
-        if isinstance(res, int):
-            return Response('', res)
-        if isinstance(res, tuple):
-            # 判断格式：(status,), (body, status), (body, status, headers) 或 (body, headers)
-            if len(res) == 1 and isinstance(res[0], int):
-                return Response('', res[0])
-            if len(res) >= 2:
-                if isinstance(res[0], int):
-                    # (status, headers) 或 (status,)
-                    return Response('', res[0], res[1] if len(res) > 1 else {})
-                if isinstance(res[1], int):
-                    # (body, status) 或 (body, status, headers)
-                    return Response(res[0], res[1], res[2] if len(res) > 2 else {})
-                # (body, headers)
-                return Response(res[0], 200, res[1])
-        # ★ 修复：dict/list 现在正确地作为 body 传入 → Response 会自动 JSON 序列化
-        return Response(res)
-
     async def dispatch_request(self, req):
-        # ★ 自动 GC：进请求前 heap 低则回收，避免中途 MemoryError
-        self._maybe_gc()
         after_request_handled = False
         if req:
             if req.content_length > req.max_content_length:
@@ -1151,35 +1084,58 @@ class NovaServer:
         res.is_head = (req and req.method == 'HEAD')
         return res
 
+    @staticmethod
+    def _normalize_response(res):
+        """统一 handler 返回值为 Response 对象。
+        支持：
+          · Response → 原样返回
+          · int → 视为状态码，空 body
+          · (status,) 元组
+          · (body, status) 或 (body, status, headers)
+          · (body, headers)
+          · dict/list → 自动 JSON 序列化
+          · str/bytes → 当作 body
+        """
+        if isinstance(res, Response):
+            return res
+        if isinstance(res, int):
+            return Response('', res)
+        if isinstance(res, tuple):
+            if len(res) == 1 and isinstance(res[0], int):
+                return Response('', res[0])
+            if len(res) >= 2:
+                if isinstance(res[0], int):
+                    return Response('', res[0],
+                                    res[1] if len(res) > 1 else {})
+                if isinstance(res[1], int):
+                    return Response(res[0], res[1],
+                                    res[2] if len(res) > 2 else {})
+                return Response(res[0], 200, res[1])
+        return Response(res)
+
     def help(self):
         print("""
-【NovaServer - ESP32+MicroPython 异步微型 Web 框架】
-----------------------------------------------------
+【NovaServer - MicroPython 异步微型 Web 框架】
+-----------------------------------------------
 [使用]:
-    from nova_server import NovaServer, send_file
+    from nova_server import NovaServer, send_file, redirect, abort
 
     app = NovaServer()
 
-    # 静态网页
-    @app.get('/index')
-    async def func(request):
-        return send_file('index.html', max_age=3600)
-
-    # 带参数的 GET 请求
     @app.get('/hello/<name>')
-    async def func(request, name):
+    async def handler(req, name):
         return 'Hello, ' + name
 
-    # 处理 POST 请求的 JSON 数据
     @app.post('/data')
-    async def func(request):
-        json_data = request.json
-        return {'received': json_data}
+    async def handler(req):
+        return {'received': req.json}
 
     if __name__ == '__main__':
-        app.run(port=80, debug=True)
+        app.run(debug=True)         # 0.0.0.0:80, 打每个请求日志
 """)
 
+
+# ★ 模块级单例
 Response.already_handled = Response()
 
 abort = NovaServer.abort
@@ -1187,11 +1143,11 @@ redirect = Response.redirect
 send_file = Response.send_file
 
 
-# ══════════════════════════════════════════════════════════════
-# 单文件部署：版本 + 公开 API
-# ══════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════
+# 公开 API
+# ════════════════════════════════════════════════════════════════
 
-__version__ = '0.1.0'
+__version__ = '0.2.0'
 __all__ = [
     'NovaServer',
     'Request',
@@ -1201,10 +1157,9 @@ __all__ = [
     'abort',
     'redirect',
     'send_file',
-    'NoCaseDict',  # 内部用，但作为公开 API 暴露
+    'NoCaseDict',
     'MultiDict',
     'AsyncBytesIO',
     'urldecode',
     'urlencode',
 ]
-

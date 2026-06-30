@@ -42,21 +42,24 @@ nova-server/
 ├── README.md                   ← 用户向（你正在看）
 ├── AGENTS.md                   ← AI 向（本文）
 │
-├── nova_server/
-│   ├── __init__.py             ← 包入口：暴露 8 个公共 API
-│   ├── nova_server.py          ← 核心框架（单文件 ~950 行）
-│   └── main.py                 ← ESP32 入口模板（WiFi + 路由 + 启动）
+├── nova_server.py              ← ★ 核心框架（单文件 ~1165 行，纯 MicroPython）
+├── main.py                     ← ESP32 入口模板（WiFi + 路由 + 启动）
 │
 ├── examples/
-│   ├── 01_hello.py             ← 最简 hello world（4 个路由）
-│   ├── 02_sensors_api.py       ← 设备 API + POST 控制
-│   └── 03_static_files.py      ← 静态文件服务
+│   ├── 01_hello.py             ← 最简 hello world（4 个路由，debug=True 默认）
+│   ├── 02_sensors_api.py       ← 设备 API + POST 控制（需要 machine/dht）
+│   ├── 03_static_files.py      ← 静态文件服务（debug=True）
+│   └── 04_async_streaming.py   ← 异步流式响应
+│
+├── test/
+│   ├── test_*.py               ← PC 端 pytest（仅开发用，框架本身只跑 MP）
+│   └── hardware/               ← ESP32 硬件测试
 │
 └── _archive/
-    └── miniweb.py              ← 原文件（保留对比）
+    └── miniweb.py              ← 旧版（保留对比，结构样板来源）
 ```
 
-**核心永远在 `nova_server.py` 一个文件里**。不改多文件结构。
+**核心永远在 `nova_server.py` 一个文件里**。v0.2 起**纯 MicroPython**，无 CPython 兼容分支。
 
 ## 核心约定
 
@@ -95,23 +98,28 @@ return send_file('index.html')
 return redirect('/login')
 ```
 
-### 4. 平台兼容性
+### 4. 平台策略（v0.2 重写后）
 
-所有 CPython→MicroPython 降级在 `nova_server.py` 头部统一处理：
+**纯 MicroPython**，仅保留一个最小测试用 shim（让 PC 上能跑 pytest）：
 
 ```python
+# nova_server.py 第 38 行附近（唯一兼容 shim）
 try:
-    # CPython 完整功能
-    from inspect import iscoroutinefunction, iscoroutine
-    from functools import partial
-    from sys import print_exception
+    from sys import print_exception    # MicroPython
 except ImportError:
-    # MicroPython 最小兼容
-    def iscoroutine(coro):
-        return hasattr(coro, 'send') and hasattr(coro, 'throw')
+    import traceback as _tb
     def print_exception(exc):
-        import traceback; traceback.print_exc()
+        _tb.print_exception(type(exc), exc, exc.__traceback__)
 ```
+
+**已删除的兼容分支**（v0.2 起）：
+- ❌ `import orjson except: import json`
+- ❌ `from inspect import iscoroutinefunction, iscoroutine`
+- ❌ `from functools import partial`
+- ❌ Windows socket 错误码 10053/10054
+- ❌ CPython UDP 探测 LAN IP（只剩 `network.WLAN`）
+- ❌ 路由 3 个限制 (`_limit = (1 << 1) + 1`)
+- ❌ `auto_gc=True` 默认（heap 碎片化卡 1-30s）
 
 ### 5. URL 参数不需要显式声明类型——用 `<int:id>` 语法
 
@@ -134,13 +142,16 @@ handler → HTTPException → error_handler(status_code) → error_response()
 ### 7. 静态文件 + 请求日志（★ 框架内置）
 
 ```python
-app = NovaServer(static_dir='/static', log=True)
+app = NovaServer(static_dir='/static', debug=True)
 ```
 
 - `static_dir`：启用静态文件服务（传 None 禁用），自动注册 /static/ 和 /static/<path:file> 两个路由
 - `static_path`：URL 前缀，默认 '/static'
-- `log`：默认 True，每个请求完成后打印一行 `[HH:MM:SS] METHOD /path STATUS (ms)`
+- `debug`：默认 False，传 True 打印每个请求日志 `[HH:MM:SS] METHOD /path STATUS (ms)`
 - 路径穿越防护（`_is_safe_path`） + OSError→404 + max_age=3600 全部封装在 `_mount_static()` 里
+- `auto_gc`：默认 False（v0.2 防 ESP32 heap 碎片化卡顿）
+- `gc_threshold_kb`：默认 50（开了的话阈值更宽松）
+- `host`/`port`：默认 `'0.0.0.0'`/`80`（v0.2 ESP32 一键启动不用 port=80）
 
 用户不需要手写 `_is_safe` 、`try/except OSError`、`send_file(max_age=...)`，只需要传 `static_dir`。
 
@@ -149,41 +160,46 @@ app = NovaServer(static_dir='/static', log=True)
 | 改这个 | 也会影响 |
 |---|---|
 | `nova_server.py` 核心路由 | 所有使用 nova-server 的 ESP32 项目 |
-| `NovaServer.__init__` 参数 | 所有示例的 app 初始化代码（static_dir / log / auto_gc） |
+| `NovaServer.__init__` 参数 | 所有示例的 app 初始化代码（host/port/debug/auto_gc/static_dir） |
 | `_mount_static()` | 所有启用 static_dir 的项目 |
 | URLPattern | 所有路径参数匹配行为 |
-| Response.body_iter | 大文件传输、流式响应 |
+| `Response._build_head` + `write` 快路径 | 所有响应性能（单 awrite） |
 | `_normalize_response` | handler 返回值自动包装逻辑 |
 | Request JSON/form 解析 | POST/PUT 请求的数据解析 |
-| 删除 `try/except` 降级 | MicroPython 兼容性 |
+| 默认 `host='0.0.0.0'` / `port=80` | ESP32 部署不再需要 `app.run(port=80)` |
+| 默认 `auto_gc=False` | ESP32 性能修复（不再默认触发 1-30s GC） |
+| 默认 `debug=False` | 请求日志改成按需打开 |
 
 ## 提交前 checklist
 
 ```bash
 cd nova-server
 
-# 1. PC 测试：跑全部 pytest
+# 1. PC 测试：跑全部 pytest（仅开发用）
 pytest test/ --ignore=test/hardware -v
-# 期望：96 passed, 10 skipped
+# 期望：133 passed, 18 skipped（v0.2 起）
 
 # 2. ESP32 测试（如有设备）
 python test/hardware/test_deploy_esp32.py COM3
-# 期望：ALL TESTS PASSED (8/8)
+# 期望：ALL TESTS PASSED
 
 # 3. 例子 import 验证
 python -c "
-for ex in ['01_hello', '02_sensors_api', '03_static_files']:
+for ex in ['01_hello', '03_static_files', '04_async_streaming']:
     with open(f'examples/{ex}.py', encoding='utf-8') as f:
         exec(f.read().split('if __name__')[0])
     print(f'{ex}: OK')
 "
+# 02_sensors_api 需要 machine/dht 模块，PC 跑不了（仅设备）
 ```
 
 ## 不要做的事
 
 - ❌ 拆多文件（MicroPython 单文件部署最方便）
-- ❌ 引入第三方依赖（保持零依赖，`orjson` 是唯一可选加速）
+- ❌ 引入第三方依赖（保持零依赖，没有可选加速选项）
 - ❌ 改 `import` 用 `u` 前缀（必须用 `json` 不是 `ujson`，`re` 不是 `ure`）
 - ❌ 在 handler 里做阻塞 I/O（会阻塞所有异步连接）
 - ❌ 用 `time.sleep()` 在异步 handler 里（用 `await asyncio.sleep()`）
 - ❌ 自动加 `CORS` 头（用户通过 `after_request` 钩子自行控制）
+- ❌ 调用 `gc.collect()` 在请求热路径上（默认 auto_gc=False，需要时手动开启）
+- ❌ 添加 CPython 兼容性 shim（v0.2 起纯 MicroPython）

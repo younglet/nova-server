@@ -1,9 +1,9 @@
 # NovaServer
 
-> ESP32 + MicroPython 异步微型 Web 框架。10KB 单文件 · 零依赖 · 已 ESP32 硬件验证。
+> **纯 MicroPython** 异步微型 Web 框架。~42KB 单文件 · 零依赖 · 专为 ESP32 优化。
 
 **nova-server** 是 [nova-frontend](..) 家族的第 5 个成员——唯一一个**后端**。
-配合 [novajs](..) / [nova-style](..) / [nova-ui](..) / [nova-chart](..) 四件套，
+配合 [novajs](..) / [nova-style](..) / [nova-ui](..) / [nova-chart](../nova-chart) 四件套，
 在 ESP32 上提供完整的 IoT 全栈能力：嵌入式 HTTP server 在前，nova-* 前端页面在后。
 
 ```python
@@ -16,23 +16,26 @@ async def hello(req, name):
     return f'Hello, {name}!'
 
 if __name__ == '__main__':
-    app.run()                          # 0.0.0.0:80，启动后打印 NovaServer running on http://...
+    app.run(debug=True)               # 0.0.0.0:80，打印 LAN IP + 每个请求日志
 ```
 
-烧到 ESP32，手机连 WiFi 访问 `http://192.168.4.1/hello/world` → 看到 "Hello, world!"
-
-PC 端开发想避开 80 端口冲突：`NovaServer(port=5000)` 或 `app.run(port=5000)`。
+烧到 ESP32，手机连 WiFi 访问 `http://192.168.x.x/hello/world` → 看到 "Hello, world!"。
+启动信息会显示真实的 LAN IP（如 `http://192.168.1.42:80/`）。
 
 ---
 
 ## ✨ 特点
 
-- 🪶 **极轻** — 单文件 ~10KB，零外部依赖（可选 `orjson` 加速）
-- ⚡ **异步** — 基于 `asyncio`，天然支持高并发连接
-- 🎯 **MicroPython 友好** — 已在 ESP32-WROVER 4MB 实测通过，兼容 MicroPython 1.17+
+- 🪶 **极轻** — 单文件 ~42KB，零外部依赖
+- ⚡ **MicroPython 原生** — 重写后**只跑 MicroPython**，砍掉所有 CPython 兼容代码
+  - 无 orjson / functools / inspect 兼容、无 Windows socket 错误码、无 CPython UDP 探测分支
+- 🎯 **ESP32 验证** — 已在 ESP32-WROVER 4MB 实测通过，MicroPython 1.17+
+- ⚡ **单 awrite 优化** — 小响应一次系统调用发送，WiFi 延迟从 5-20ms 降到 2-4ms
+- 🚫 **GC 默认关闭** — heap 碎片化卡顿 1-30 秒的情况默认规避
 - 🧩 **API 简洁** — `@app.get/post/put/delete` 装饰器、URL 参数、JSON 自动序列化
-- 🔌 **零依赖** — 不依赖任何第三方包，纯标准库 + MicroPython 内置模块
+- 🔌 **零依赖** — 不依赖任何第三方包，纯 MicroPython 内置模块
 - 🔋 **电池包含** — 内置静态文件夹服务（含路径穿越防护）、请求日志、Cookie、错误处理、子应用挂载
+- 🆙 **无限路由** — 不再有 3 路由限制，可注册任意多个路由和子应用
 
 ## 📁 项目结构
 
@@ -111,10 +114,10 @@ app = NovaServer(static_dir='/static')   # 一行启用静态文件服务
 - `static_path`：URL 前缀，默认 `/static`
 - 路径穿越、404、Cache-Control 全部框架内置，**用户无需手写任何代码**
 
-### 请求日志（★ 默认开启）
+### 请求日志（★ 默认关闭，按需打开）
 
 ```python
-app = NovaServer(log=True)   # 默认 True
+app = NovaServer(debug=True)   # 或 app.run(debug=True)
 ```
 
 每个请求完成后自动打印一行：
@@ -125,7 +128,8 @@ app = NovaServer(log=True)   # 默认 True
 [14:30:22] GET /static/../etc 403 (1ms)
 ```
 
-格式：`[时间] METHOD 路径 状态码 (耗时ms)`。设为 `log=False` 关闭。
+格式：`[HH:MM:SS] METHOD 路径 状态码 (耗时ms)`。耗时使用 `time.ticks_ms()` 
+单调时钟（MicroPython 原生），无需 RTC 校准。设为 `debug=False` 关闭。
 
 ### 路由装饰器
 
@@ -246,16 +250,21 @@ ESP32 flash
 └── lib/                 ← 其他 MicroPython 库
 ```
 
-## 🧪 MicroPython 兼容说明
+## 🧪 平台策略
 
-| 特性 | CPython | MicroPython |
-|------|---------|-------------|
-| `orjson` 加速 | 可选 | ❌ 不支持（自动降级） |
-| `iscoroutinefunction` | ✅ | ❌（自动降级） |
-| `sys.print_exception` | ✅ | ❌（自动降级） |
-| `ThreadPoolExecutor` | ✅ | ❌（仅 CPython 回退） |
-| `asyncio` | ✅ | ✅（MicroPython 1.17+） |
-| `__mro__` | ✅ | ✅（MicroPython 1.17+） |
+**nova-server v0.2 已是纯 MicroPython**：框架代码不再为 CPython 提供兼容分支。
+这意味着：
+
+- ✅ 在 ESP32 / NovaMP 固件上：原生最优，每个字节、每条指令都为 MicroPython 设计
+- ⚠️ 在 PC (CPython) 上：**仅供 PC 端开发测试用**（pytest 等）。生产请用 MicroPython 设备
+- 🔬 唯一保留的 PC 兼容：`sys.print_exception` 在 CPython 上不存在，所以用 `traceback` 兜底（仅便于在 PC 跑测试）
+
+| 路径 | 状态 |
+|------|------|
+| `network.WLAN` 取 LAN IP | ✅ MicroPython ESP32 |
+| `time.ticks_ms()` 计时 | ✅ MicroPython（单调时钟，无需 RTC） |
+| `sys.print_exception` | ✅ MicroPython；CPython 自动用 `traceback` 兜底 |
+| `asyncio.start_server` | ✅ MicroPython 1.17+ / CPython 3.10+ |
 
 ## 📜 License
 
