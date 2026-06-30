@@ -458,40 +458,68 @@ class Response:
             if 'charset=' not in self.headers['Content-Type']:
                 self.headers['Content-Type'] += '; charset=UTF-8'
 
+    def _build_head(self):
+        """把状态行 + headers + 空行合成一个 bytes，单次发送。
+
+        优化点（ESP32 上重要）：
+          · 避免每行 header 都 str.format().encode() + awrite
+          · 一次 awrite 取代多次 syscalls，WiFi 下能省每行 1-5ms
+        """
+        reason = self.reason if self.reason is not None else \
+            ('OK' if self.status_code == 200 else 'N/A')
+        parts = ['HTTP/1.0 {code} {reason}\r\n'.format(
+            code=self.status_code, reason=reason).encode()]
+        for header, value in self.headers.items():
+            values = value if isinstance(value, list) else [value]
+            for v in values:
+                parts.append('{h}: {v}\r\n'.format(
+                    h=header, v=v).encode())
+        parts.append(b'\r\n')
+        return b''.join(parts)
+
     async def write(self, stream):
         self.complete()
 
         try:
-            
-            reason = self.reason if self.reason is not None else \
-                ('OK' if self.status_code == 200 else 'N/A')
-            await stream.awrite('HTTP/1.0 {status_code} {reason}\r\n'.format(
-                status_code=self.status_code, reason=reason).encode())
+            head = self._build_head()
+            body = self.body
 
-            
-            for header, value in self.headers.items():
-                values = value if isinstance(value, list) else [value]
-                for value in values:
-                    await stream.awrite('{header}: {value}\r\n'.format(
-                        header=header, value=value).encode())
-            await stream.awrite(b'\r\n')
-
-            
-            if not self.is_head:
-                iter = self.body_iter()
-                async for body in iter:
-                    if isinstance(body, str):  
-                        body = body.encode()
-                    try:
-                        await stream.awrite(body)
-                    except OSError as exc:  
-                        if exc.errno in MUTED_SOCKET_ERRORS or \
-                                exc.args[0] == 'Connection lost':
-                            if hasattr(iter, 'aclose'):
-                                await iter.aclose()
-                        raise
-                if hasattr(iter, 'aclose'):  
-                    await iter.aclose()
+            # ★ 快路径（最常见）：手头已有 bytes/str body
+            #   直接一次 awrite 拼 head + body。microPython StreamWriter.drain()
+            #   会等发送缓冲区空，所以不用我们自己手动 chunk + 反压控制。
+            fast = (
+                not self.is_head
+                and isinstance(body, (bytes, bytearray))
+                and not hasattr(body, '__anext__')   # 不是 async gen
+                and not hasattr(body, 'read')         # 不是 file-like
+                and not hasattr(body, '__next__')      # 不是 sync gen
+            )
+            if fast:
+                total = len(head) + len(body)
+                if total <= 16 * 1024:   # ≤16KB → 一次 send
+                    await stream.awrite(head + body)
+                else:
+                    # 大块但仍是内存里的字节 → 分两次，避免 VFS 紧张
+                    await stream.awrite(head)
+                    await stream.awrite(body)
+            else:
+                await stream.awrite(head)
+                if not self.is_head:
+                    # 慢路径：file / generator / async iter，保持原 chunked 逻辑
+                    iter_obj = self.body_iter()
+                    async for chunk in iter_obj:
+                        if isinstance(chunk, str):
+                            chunk = chunk.encode()
+                        try:
+                            await stream.awrite(chunk)
+                        except OSError as exc:
+                            if exc.errno in MUTED_SOCKET_ERRORS or \
+                                    exc.args[0] == 'Connection lost':
+                                if hasattr(iter_obj, 'aclose'):
+                                    await iter_obj.aclose()
+                            raise
+                    if hasattr(iter_obj, 'aclose'):
+                        await iter_obj.aclose()
 
         except OSError as exc:  
             if exc.errno in MUTED_SOCKET_ERRORS or \
@@ -672,8 +700,8 @@ class HTTPException(Exception):
 
 class NovaServer:
     """NovaServer - 面向 ESP32+MicroPython 的异步微型 Web 框架"""
-    def __init__(self, static_dir=None, static_path='/static', log=True,
-                 auto_gc=True, gc_threshold_kb=10,
+    def __init__(self, static_dir=None, static_path='/static',
+                 debug=False, auto_gc=True, gc_threshold_kb=10,
                  host='0.0.0.0', port=80):
         """
         参数：
@@ -688,8 +716,10 @@ class NovaServer:
                               GET {static_path}/<path:file>  → 文件（含路径穿越防护）
           static_path:      静态文件 URL 前缀（默认 '/static'）。
                             仅在 static_dir 不为 None 时生效。
-          log:              是否在每个请求完成后打印一行访问日志（默认 True）。
-                            格式：[14:30:21] GET /api/sensors 200 (12ms)
+          debug:            是否启用调试模式（默认 False）：
+                              · 在 start_server 前打印 'Starting async server on ...'
+                              · 每个请求完成后打印一行访问日志：
+                                [14:30:21] GET /api/sensors 200 (12ms)
           auto_gc:          是否在请求处理前后自动回收内存（默认 True）
           gc_threshold_kb:   剩余 heap 低于此值时触发回收（默认 10 KB）
                             设为 0 禁用；只在 MicroPython 上有效（PC 上自动跳过）
@@ -700,13 +730,12 @@ class NovaServer:
         self.after_error_request_handlers = []
         self.error_handlers = {}
         self.options_handler = self.default_options_handler
-        self.debug = False
+        self.debug = bool(debug)
         self.server = None
         self.auto_gc = auto_gc
         self.gc_threshold = gc_threshold_kb * 1024
         self.static_dir = static_dir
         self.static_path = static_path
-        self.log = log
         self.host = host
         self.port = port
         if static_dir:
@@ -818,19 +847,16 @@ class NovaServer:
         raise HTTPException(status_code, reason)
 
     async def start_server(self, host=None, port=None, debug=False,
-                           ssl=None, log=None):
+                           ssl=None):
         """异步启动。
-        host/port/log 不传时回退到 __init__ 设置的 self.host/self.port/self.log。
-        显式传 log=True/False 可以运行时覆盖构造时的日志开关。
+        host/port 不传时回退到 __init__ 设置的 self.host/self.port。
+        显式传 debug=True/False 可以运行时覆盖构造时的调试开关。
         """
         if host is None:
             host = self.host
         if port is None:
             port = self.port
-        if log is not None:
-            # 只在显式传 log 时才覆盖 self.log，让 run() 临时切换生效
-            self.log = bool(log)
-        self.debug = debug
+        self.debug = bool(debug)
 
         async def serve(reader, writer):
             if not hasattr(writer, 'awrite'):  
@@ -864,13 +890,13 @@ class NovaServer:
         #   这样手机/电脑可以直接打开这个 URL，不需要反查设备 IP。
         lan_ip = _detect_lan_ip()
         if lan_ip and lan_ip != host:
-            print('NovaServer running on http://{lan_ip}:{port}/ (log={log}, debug={debug})'.format(
-                lan_ip=lan_ip, port=port, log=self.log, debug=debug))
+            print('NovaServer running on http://{lan_ip}:{port}/ (debug={debug})'.format(
+                lan_ip=lan_ip, port=port, debug=debug))
             print('  (listening on {host}:{port}, reachable from LAN at {lan_ip}:{port})'.format(
                 host=host, port=port, lan_ip=lan_ip))
         else:
-            print('NovaServer running on http://{host}:{port}/ (log={log}, debug={debug})'.format(
-                host=host, port=port, log=self.log, debug=debug))
+            print('NovaServer running on http://{host}:{port}/ (debug={debug})'.format(
+                host=host, port=port, debug=debug))
 
         while True:
             try:
@@ -886,18 +912,15 @@ class NovaServer:
                 
                 await asyncio.sleep(0.1)
 
-    def run(self, host=None, port=None, debug=False, ssl=None, log=True):
+    def run(self, host=None, port=None, debug=False, ssl=None):
         """同步入口。参数不传时使用 __init__ 设置的 self.host / self.port。
 
-        参数：
-          log:  True（默认）→ 每个请求打印一行访问日志：
-                          [14:30:21] GET /hello/world 200 (12ms)
-                False     → 静音模式，只打印启动地址，不打请求日志
-                注意：此参数会覆盖 NovaServer(log=...) 的设置，
-                因为 run() 通常只调一次，持久化 self.log 反而最直观。
+        debug=False（默认）→ 静音模式，启动后只打一行地址提示；
+        debug=True        → 额外打每个请求的访问日志：
+                              [14:30:21] GET /hello/world 200 (12ms)
         """
         asyncio.run(self.start_server(host=host, port=port, debug=debug,
-                                      ssl=ssl, log=log))
+                                      ssl=ssl))
 
     def shutdown(self):
         self.server.close()
@@ -960,7 +983,7 @@ class NovaServer:
                 pass
             else:
                 raise
-        if req and (self.log or self.debug):
+        if req and self.debug:
             try:
                 elapsed_ms = int((time.time() - start_time) * 1000)
                 ts = time.strftime('%H:%M:%S', time.localtime())

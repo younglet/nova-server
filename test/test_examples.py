@@ -217,10 +217,10 @@ class TestStaticFilesExample:
         assert ns['app'].static_dir == '/static'
         assert ns['app'].static_path == '/static'
 
-    def test_log_enabled(self):
-        """★ log 默认 True。"""
+    def test_debug_enabled(self):
+        """★ debug=True 开启请求日志（03_static_files example 用）。"""
         ns = _load_example('03_static_files')
-        assert ns['app'].log is True
+        assert ns['app'].debug is True
 
     @pytest.mark.asyncio
     async def test_path_traversal_blocked(self):

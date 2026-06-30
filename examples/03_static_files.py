@@ -40,7 +40,7 @@ from nova_server import NovaServer, redirect
 
 
 # ★ 一行启用：static_dir='/static' → 自动挂载 /static/ 路由
-app = NovaServer(static_dir='/static', log=True)
+app = NovaServer(static_dir='/static', debug=True)
 
 
 # ── 路由 ────────────────────────────────────────────────

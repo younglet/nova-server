@@ -20,7 +20,7 @@ app = NovaServer()
 |------|------|------|
 | `host` | `'0.0.0.0'` | 默认监听地址。`run()` / `start_server()` 不传时使用 |
 | `port` | `80` | 默认监听端口（HTTP 标准）。`run()` / `start_server()` 不传时使用 |
-| `log` | `True` | 是否打印每个请求的访问日志。`run(log=...)` 可临时覆盖 |
+| `debug` | `False` | 调试模式：开则打印启动横幅 + 每个请求的访问日志 |
 | `auto_gc` | `True` | 请求前后自动 GC（heap 低时） |
 | `gc_threshold_kb` | `10` | 剩余 heap 低于此值（KB）触发 GC |
 
@@ -143,14 +143,14 @@ async def handle_my_error(request, exc):
 
 ## 启动
 
-### `app.run(host=None, port=None, debug=False, log=True)`
+### `app.run(host=None, port=None, debug=False)`
 
 阻塞启动（最简单）：
 
 ```python
-app.run()                              # 0.0.0.0:80 + 打日志
+app.run()                              # 0.0.0.0:80，安静模式
 app.run(host='0.0.0.0', port=80)       # 显式指定
-app.run(log=False)                     # 静音模式：只打启动行
+app.run(debug=True)                    # 调试：每个请求打一行日志
 ```
 
 参数：
@@ -159,14 +159,13 @@ app.run(log=False)                     # 静音模式：只打启动行
 |------|------|------|
 | `host` | `app.host`（构造时设的） | 监听地址 |
 | `port` | `app.port`（构造时设的，默认 80） | 端口 |
-| `debug` | `False` | 启用调试模式 |
-| `log` | `True` | 实时打印每个请求的访问日志：`[14:30:21] GET /hello 200 (5ms)` |
+| `debug` | `False` | `True` 时打印启动横幅 + 每个请求日志：`[14:30:21] GET /hello 200 (5ms)` |
 
 不传任何参数时使用 `NovaServer()` 构造函数里设的 `host`/`port`，默认是 `0.0.0.0:80`。
 
-**启动后总会打印一行**（不管 `log` 是否打开），并优先显示 LAN IP（WiFi 已连时）：
+**启动后总会打印一行**（不管 `debug` 是否打开），并优先显示 LAN IP（WiFi 已连时）：
 ```
-NovaServer running on http://192.168.1.42:80/ (log=True, debug=False)
+NovaServer running on http://192.168.1.42:80/ (debug=False)
   (listening on 0.0.0.0:80, reachable from LAN at 192.168.1.42:80)
 ```
 
@@ -175,7 +174,7 @@ LAN IP 探测原理：
 - **CPython**：用 UDP socket 探测连接 8.8.8.8（不发包，读 `getsockname()`）
 - 探测失败时回落到 host（如 `0.0.0.0`），不崩溃
 
-### `await app.start_server(host=None, port=None, debug=False, log=None)`
+### `await app.start_server(host=None, port=None, debug=False)`
 
 异步启动（要用后台任务时）。参数同样回退到构造函数：
 
@@ -184,13 +183,11 @@ import asyncio
 
 async def main():
     asyncio.create_task(background_task())
-    await app.start_server()                 # 用 NovaServer() 里设的 host/port
-    await app.start_server(log=False)         # 启动时关闭实时日志
+    await app.start_server()           # 用 NovaServer() 里设的 host/port
+    await app.start_server(debug=True) # 启动时打开请求日志
 
 asyncio.run(main())
 ```
-
-`log=None` 表示沿用 `NovaServer(log=...)` 设置；显式传 `True`/`False` 可运行时覆盖。
 
 ### `app.shutdown()`
 

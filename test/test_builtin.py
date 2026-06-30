@@ -5,7 +5,7 @@ test_builtin.py — nova_server 内置特性的单元测试
 覆盖：
   - _is_safe_path：路径穿越防护
   - NovaServer(static_dir=...)：自动挂载静态文件路由
-  - NovaServer(log=True/False)：日志开关
+  - NovaServer(debug=True/False)：调试开关（含请求日志）
 """
 import json
 import pytest
@@ -78,19 +78,19 @@ class TestStaticDirMount:
         assert app.static_dir == '/www'
         assert app.static_path == '/assets'
 
-    def test_log_default_true(self):
+    def test_debug_default_false(self):
         app = NovaServer()
-        assert app.log is True
+        assert app.debug is False
 
-    def test_log_can_be_disabled(self):
-        app = NovaServer(log=False)
-        assert app.log is False
+    def test_debug_can_be_enabled(self):
+        app = NovaServer(debug=True)
+        assert app.debug is True
 
-    def test_static_dir_with_log(self):
+    def test_static_dir_with_debug(self):
         """两个特性可以同时启用。"""
-        app = NovaServer(static_dir='/static', log=False)
+        app = NovaServer(static_dir='/static', debug=True)
         assert app.static_dir == '/static'
-        assert app.log is False
+        assert app.debug is True
 
     @pytest.mark.asyncio
     async def test_path_traversal_returns_403(self):
