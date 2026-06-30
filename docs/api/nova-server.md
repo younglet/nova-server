@@ -143,14 +143,15 @@ async def handle_my_error(request, exc):
 
 ## 启动
 
-### `app.run(host=None, port=None, debug=False)`
+### `app.run(host=None, port=None, debug=None)`
 
 阻塞启动（最简单）：
 
 ```python
-app.run()                              # 0.0.0.0:80，安静模式
+app.run()                              # 用 NovaServer() 设置：0.0.0.0:80, debug=False
 app.run(host='0.0.0.0', port=80)       # 显式指定
 app.run(debug=True)                    # 调试：每个请求打一行日志
+app = NovaServer(debug=True); app.run()  # 也能走 debug=True（不被 start_server 覆盖）
 ```
 
 参数：
@@ -159,7 +160,7 @@ app.run(debug=True)                    # 调试：每个请求打一行日志
 |------|------|------|
 | `host` | `app.host`（构造时设的） | 监听地址 |
 | `port` | `app.port`（构造时设的，默认 80） | 端口 |
-| `debug` | `False` | `True` 时打印启动横幅 + 每个请求日志：`[14:30:21] GET /hello 200 (5ms)` |
+| `debug` | `app.debug`（构造时设的，默认 False） | `True` 时启动横幅 + 每个请求日志：`[14:30:21] GET /hello 200 (5ms)`。★ 不传则沿用构造函数设置 |
 
 不传任何参数时使用 `NovaServer()` 构造函数里设的 `host`/`port`，默认是 `0.0.0.0:80`。
 
@@ -174,7 +175,7 @@ LAN IP 探测原理：
 - **CPython**：用 UDP socket 探测连接 8.8.8.8（不发包，读 `getsockname()`）
 - 探测失败时回落到 host（如 `0.0.0.0`），不崩溃
 
-### `await app.start_server(host=None, port=None, debug=False)`
+### `await app.start_server(host=None, port=None, debug=None)`
 
 异步启动（要用后台任务时）。参数同样回退到构造函数：
 
@@ -183,7 +184,7 @@ import asyncio
 
 async def main():
     asyncio.create_task(background_task())
-    await app.start_server()           # 用 NovaServer() 里设的 host/port
+    await app.start_server()           # 用 NovaServer() 里设的 host/port/debug
     await app.start_server(debug=True) # 启动时打开请求日志
 
 asyncio.run(main())

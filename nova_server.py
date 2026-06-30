@@ -846,17 +846,18 @@ class NovaServer:
         
         raise HTTPException(status_code, reason)
 
-    async def start_server(self, host=None, port=None, debug=False,
+    async def start_server(self, host=None, port=None, debug=None,
                            ssl=None):
         """异步启动。
-        host/port 不传时回退到 __init__ 设置的 self.host/self.port。
-        显式传 debug=True/False 可以运行时覆盖构造时的调试开关。
+        host/port/debug 不传时回退到 __init__ 设置的 self.host/self.port/debug。
+        ★ 关键：debug 默认是 None 也不是 False，以免覆盖 NovaServer(debug=...) 的设置。
         """
         if host is None:
             host = self.host
         if port is None:
             port = self.port
-        self.debug = bool(debug)
+        if debug is not None:   # 只在显式传时才覆盖
+            self.debug = bool(debug)
 
         async def serve(reader, writer):
             if not hasattr(writer, 'awrite'):  
@@ -912,12 +913,12 @@ class NovaServer:
                 
                 await asyncio.sleep(0.1)
 
-    def run(self, host=None, port=None, debug=False, ssl=None):
-        """同步入口。参数不传时使用 __init__ 设置的 self.host / self.port。
+    def run(self, host=None, port=None, debug=None, ssl=None):
+        """同步入口。参数不传时使用 __init__ 设置的 self.host / self.port / self.debug。
 
-        debug=False（默认）→ 静音模式，启动后只打一行地址提示；
-        debug=True        → 额外打每个请求的访问日志：
-                              [14:30:21] GET /hello/world 200 (12ms)
+        debug=None（默认）→ 用 NovaServer(debug=...) 的设置；
+                True    → 明确打开请求日志；
+                False   → 明确关闭请求日志。
         """
         asyncio.run(self.start_server(host=host, port=port, debug=debug,
                                       ssl=ssl))
