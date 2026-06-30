@@ -21,13 +21,18 @@ app = NovaServer()
 | `host` | `'0.0.0.0'` | 默认监听地址。`run()` / `start_server()` 不传时使用 |
 | `port` | `80` | 默认监听端口（HTTP 标准）。`run()` / `start_server()` 不传时使用 |
 | `debug` | `False` | 调试模式：开则打印启动横幅 + 每个请求的访问日志 |
-| `auto_gc` | `True` | 请求前后自动 GC（heap 低时） |
-| `gc_threshold_kb` | `10` | 剩余 heap 低于此值（KB）触发 GC |
+| `auto_gc` | `False` | ★ ESP32 友好默认。ESP32 heap 碎片化时 `gc.collect()` 可达 1–30 秒，建议关闭。PC 有足够 RAM。手动 GC 可在 handler 里 `import gc; gc.collect()` |
+| `gc_threshold_kb` | `50` | 剩余 heap 低于此值（KB）时触发 GC。仅 `auto_gc=True` 时起作用 |
 
-关掉自动 GC：
+手动 GC（推荐在内存紧张时调用）：
 
 ```python
-app = NovaServer(auto_gc=False)
+import gc
+@app.get('/upload')
+async def upload(req):
+    gc.collect()        # 手动回收
+    data = req.json
+    return {'size': len(data)}
 ```
 
 PC 端开发想用 5000 端口（避免和系统 80 端口冲突）：

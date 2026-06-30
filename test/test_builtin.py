@@ -82,6 +82,18 @@ class TestStaticDirMount:
         app = NovaServer()
         assert app.debug is False
 
+    def test_auto_gc_default_false(self):
+        """★ ESP32 友好默认：auto_gc=False 防止 heap 碎片化卡顿 1-30 秒。"""
+        app = NovaServer()
+        assert app.auto_gc is False
+        assert app.gc_threshold == 50 * 1024
+
+    def test_auto_gc_opt_in(self):
+        """用户可以显式打开，但要传更大的阈值。"""
+        app = NovaServer(auto_gc=True, gc_threshold_kb=100)
+        assert app.auto_gc is True
+        assert app.gc_threshold == 100 * 1024
+
     def test_debug_can_be_enabled(self):
         app = NovaServer(debug=True)
         assert app.debug is True

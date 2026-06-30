@@ -727,7 +727,7 @@ class HTTPException(Exception):
 class NovaServer:
     """NovaServer - 面向 ESP32+MicroPython 的异步微型 Web 框架"""
     def __init__(self, static_dir=None, static_path='/static',
-                 debug=False, auto_gc=True, gc_threshold_kb=10,
+                 debug=False, auto_gc=False, gc_threshold_kb=50,
                  host='0.0.0.0', port=80):
         """
         参数：
@@ -746,9 +746,15 @@ class NovaServer:
                               · 在 start_server 前打印 'Starting async server on ...'
                               · 每个请求完成后打印一行访问日志：
                                 [14:30:21] GET /api/sensors 200 (12ms)
-          auto_gc:          是否在请求处理前后自动回收内存（默认 True）
-          gc_threshold_kb:   剩余 heap 低于此值时触发回收（默认 10 KB）
-                            设为 0 禁用；只在 MicroPython 上有效（PC 上自动跳过）
+          auto_gc:          ★ 默认 False。
+                            ESP32 heap 碎片化时 gc.collect() 可达 1-30 秒
+                            （几乎必触发 WDT 超时），默认关闭避免偶发卡顿。
+                            PC 上 RAM 足够，无需 GC。
+                            如需打开：NovaServer(auto_gc=True, gc_threshold_kb=...)
+          gc_threshold_kb:   剩余 heap 低于此值时触发回收（默认 50 KB）。
+                            仅 auto_gc=True 时起作用。设为 0 禁用触发阈值。
+                            默认从旧版 10 KB 提升到 50 KB，避免频繁 GC。
+                            在 MicroPython 上有效（PC 上 _maybe_gc 自动跳过）。
         """
         self.url_map = []
         self.before_request_handlers = []

@@ -8,16 +8,22 @@ ESP32 只有 ~110 KB 可用 heap（启动后）。nova-server 内置**自动 GC*
 > nova-server 在每次请求处理前后自动检查 heap：剩余 < 10 KB 就回收。
 > PC 上没有 `gc.mem_free()`，自动跳过。
 
-如果你想关闭：
+nova-server 默认就是 `auto_gc=False`（ESP32 友好），如果你的应用场景需要 GC（如内存吃紧），可以显式开启：
 
 ```python
-app = NovaServer(auto_gc=False)
+app = NovaServer(auto_gc=True, gc_threshold_kb=100)   # 剩余 < 100KB 才回收
 ```
 
-或者调整阈值（默认 10 KB）：
+或者在 handler 里手动调用：
 
 ```python
-app = NovaServer(gc_threshold_kb=20)   # 剩余 < 20KB 才回收
+import gc
+
+@app.post('/upload')
+async def upload(request):
+    gc.collect()
+    data = request.json
+    return {'size': len(data)}
 ```
 
 ## 看剩余内存
@@ -25,7 +31,6 @@ app = NovaServer(gc_threshold_kb=20)   # 剩余 < 20KB 才回收
 ```python
 @app.get('/memory')
 async def memory(request):
-    # 不用调 gc.collect()，框架已经处理
     free = gc.mem_free()
     used = gc.mem_alloc()
     total = free + used
