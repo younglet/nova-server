@@ -231,7 +231,7 @@ pytest test/ --ignore=test/hardware -v --tb=short | grep -E "(FAIL|ERROR)"
 |------|------|
 | `nova_server.py` | ★ 框架核心（单文件） |
 | `main.py` | ESP32 入口模板（WiFi + server） |
-| `examples/01_hello.py` | PC 端 hello（5000 端口） |
+| `examples/01_hello.py` | PC 端 hello（80 端口，与 ESP32 一致） |
 | `examples/01_hello_esp32.py` | ESP32 端 hello（WiFi + 80 端口） |
 | `examples/02_sensors_api.py` | 传感器 API（DHT22 + ADC + LED） |
 | `examples/03_static_files.py` | 静态文件服务 |

@@ -48,14 +48,14 @@ http://192.168.1.42/hello?name=World
 | 80 | HTTP（浏览器默认） |
 | 443 | HTTPS |
 | 22 | SSH |
-| 5000 | nova-server 默认（PC 测试时） |
+| 5000 | nova-server PC 开发默认（用 `NovaServer(port=5000)` 显式指定） |
 
-访问 `http://esp32-ip/` 实际是访问 `http://esp32-ip:80/`（80 是 HTTP 默认）。
+访问 `http://esp32-ip/` 实际是访问 `http://esp32-ip:80/`（80 是 HTTP 默认）。`app.run()` 不传 port 时默认就监听 80。
 
 如果你用其他端口，要加 `:端口号`：
 
 ```
-http://esp32-ip:5000/    # 5000 端口
+http://esp32-ip:5000/    # 5000 端口（PC 开发常见）
 ```
 
 ## 什么是 HTTP 方法？

@@ -639,9 +639,14 @@ class HTTPException(Exception):
 class NovaServer:
     """NovaServer - 面向 ESP32+MicroPython 的异步微型 Web 框架"""
     def __init__(self, static_dir=None, static_path='/static', log=True,
-                 auto_gc=True, gc_threshold_kb=10):
+                 auto_gc=True, gc_threshold_kb=10,
+                 host='0.0.0.0', port=80):
         """
         参数：
+          host:              默认监听地址（默认 '0.0.0.0'）。
+                            传给 run() / start_server() 时如不显式指定则使用此值。
+          port:              默认监听端口（默认 80，对应 HTTP 标准端口）。
+                            传给 run() / start_server() 时如不显式指定则使用此值。
           static_dir:       静态文件目录（如 '/www'、'/static'）。
                             传 None 禁用内置静态服务（默认 None）。
                             启用后自动注册：
@@ -668,6 +673,8 @@ class NovaServer:
         self.static_dir = static_dir
         self.static_path = static_path
         self.log = log
+        self.host = host
+        self.port = port
         if static_dir:
             self._mount_static(static_dir, static_path)
 
@@ -776,8 +783,12 @@ class NovaServer:
         
         raise HTTPException(status_code, reason)
 
-    async def start_server(self, host='0.0.0.0', port=5000, debug=False,
+    async def start_server(self, host=None, port=None, debug=False,
                            ssl=None):
+        if host is None:
+            host = self.host
+        if port is None:
+            port = self.port
         self.debug = debug
 
         async def serve(reader, writer):
@@ -807,6 +818,11 @@ class NovaServer:
         except TypeError:  
             self.server = await asyncio.start_server(serve, host, port)
 
+        # ★ server 创建成功后打印启动信息
+        #   即便 debug=False 也打印，方便用户确认程序已跑起来
+        print('NovaServer running on http://{host}:{port}/ (debug={debug})'.format(
+            host=host, port=port, debug=debug))
+
         while True:
             try:
                 if hasattr(self.server, 'serve_forever'):  
@@ -821,10 +837,10 @@ class NovaServer:
                 
                 await asyncio.sleep(0.1)
 
-    def run(self, host='0.0.0.0', port=5000, debug=False, ssl=None):
-        
+    def run(self, host=None, port=None, debug=False, ssl=None):
+        """同步入口。参数不传时使用 __init__ 设置的 self.host / self.port。"""
         asyncio.run(self.start_server(host=host, port=port, debug=debug,
-                                      ssl=ssl))  
+                                      ssl=ssl))
 
     def shutdown(self):
         self.server.close()

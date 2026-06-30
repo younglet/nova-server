@@ -18,6 +18,8 @@ app = NovaServer()
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
+| `host` | `'0.0.0.0'` | 默认监听地址。`run()` / `start_server()` 不传时使用 |
+| `port` | `80` | 默认监听端口（HTTP 标准）。`run()` / `start_server()` 不传时使用 |
 | `auto_gc` | `True` | 请求前后自动 GC（heap 低时） |
 | `gc_threshold_kb` | `10` | 剩余 heap 低于此值（KB）触发 GC |
 
@@ -25,6 +27,12 @@ app = NovaServer()
 
 ```python
 app = NovaServer(auto_gc=False)
+```
+
+PC 端开发想用 5000 端口（避免和系统 80 端口冲突）：
+
+```python
+app = NovaServer(port=5000)
 ```
 
 ## 路由装饰器
@@ -146,20 +154,27 @@ app.run(host='0.0.0.0', port=80, debug=True)
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `host` | `'0.0.0.0'` | 监听地址 |
-| `port` | `5000` | 端口 |
+| `host` | `app.host`（构造时设的） | 监听地址 |
+| `port` | `app.port`（构造时设的，默认 80） | 端口 |
 | `debug` | `False` | 打印每个请求日志 |
 
-### `await app.start_server(host, port, debug)`
+不传任何参数时使用 `NovaServer()` 构造函数里设的 `host`/`port`，默认是 `0.0.0.0:80`。
 
-异步启动（要用后台任务时）：
+启动后会打印一行：
+```
+NovaServer running on http://0.0.0.0:80/ (debug=False)
+```
+
+### `await app.start_server(host=None, port=None, debug=False)`
+
+异步启动（要用后台任务时）。参数同样回退到构造函数：
 
 ```python
 import asyncio
 
 async def main():
     asyncio.create_task(background_task())
-    await app.start_server(host='0.0.0.0', port=80)
+    await app.start_server()   # 用 NovaServer() 里设的 host/port
 
 asyncio.run(main())
 ```

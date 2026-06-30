@@ -9,17 +9,19 @@
 ```python
 from nova_server import NovaServer
 
-app = NovaServer()
+app = NovaServer()                    # 默认 host='0.0.0.0', port=80
 
 @app.get('/hello/<name>')
 async def hello(req, name):
     return f'Hello, {name}!'
 
 if __name__ == '__main__':
-    app.run(port=80, debug=True)
+    app.run()                          # 0.0.0.0:80，启动后打印 NovaServer running on http://...
 ```
 
 烧到 ESP32，手机连 WiFi 访问 `http://192.168.4.1/hello/world` → 看到 "Hello, world!"
+
+PC 端开发想避开 80 端口冲突：`NovaServer(port=5000)` 或 `app.run(port=5000)`。
 
 ---
 
@@ -70,9 +72,9 @@ git clone <repo> && cd nova-server
 # 2. 运行最简例子
 python examples/01_hello.py
 
-# 3. 浏览器测试
-curl http://localhost:5000/hello/world    # → "Hello, world!"
-curl http://localhost:5000/api/version    # → {"server": "nova-server", ...}
+# 3. 浏览器测试（默认 80 端口）
+curl http://localhost/hello/world    # → "Hello, world!"
+curl http://localhost/api/version    # → {"server": "nova-server", ...}
 ```
 
 ### 部署到 ESP32

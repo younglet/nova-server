@@ -26,7 +26,7 @@
 cd nova-server
 
 # PC 端测试
-python examples/01_hello.py                        # → localhost:5000
+python examples/01_hello.py                        # → localhost:80
 
 # ESP32 部署
 mpremote connect COM3
