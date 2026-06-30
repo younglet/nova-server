@@ -784,11 +784,18 @@ class NovaServer:
         raise HTTPException(status_code, reason)
 
     async def start_server(self, host=None, port=None, debug=False,
-                           ssl=None):
+                           ssl=None, log=None):
+        """异步启动。
+        host/port/log 不传时回退到 __init__ 设置的 self.host/self.port/self.log。
+        显式传 log=True/False 可以运行时覆盖构造时的日志开关。
+        """
         if host is None:
             host = self.host
         if port is None:
             port = self.port
+        if log is not None:
+            # 只在显式传 log 时才覆盖 self.log，让 run() 临时切换生效
+            self.log = bool(log)
         self.debug = debug
 
         async def serve(reader, writer):
@@ -818,10 +825,9 @@ class NovaServer:
         except TypeError:  
             self.server = await asyncio.start_server(serve, host, port)
 
-        # ★ server 创建成功后打印启动信息
-        #   即便 debug=False 也打印，方便用户确认程序已跑起来
-        print('NovaServer running on http://{host}:{port}/ (debug={debug})'.format(
-            host=host, port=port, debug=debug))
+        # ★ 启动地址提示：server 起来后总打印，让用户立刻确认程序在线
+        print('NovaServer running on http://{host}:{port}/ (log={log}, debug={debug})'.format(
+            host=host, port=port, log=self.log, debug=debug))
 
         while True:
             try:
@@ -837,10 +843,18 @@ class NovaServer:
                 
                 await asyncio.sleep(0.1)
 
-    def run(self, host=None, port=None, debug=False, ssl=None):
-        """同步入口。参数不传时使用 __init__ 设置的 self.host / self.port。"""
+    def run(self, host=None, port=None, debug=False, ssl=None, log=True):
+        """同步入口。参数不传时使用 __init__ 设置的 self.host / self.port。
+
+        参数：
+          log:  True（默认）→ 每个请求打印一行访问日志：
+                          [14:30:21] GET /hello/world 200 (12ms)
+                False     → 静音模式，只打印启动地址，不打请求日志
+                注意：此参数会覆盖 NovaServer(log=...) 的设置，
+                因为 run() 通常只调一次，持久化 self.log 反而最直观。
+        """
         asyncio.run(self.start_server(host=host, port=port, debug=debug,
-                                      ssl=ssl))
+                                      ssl=ssl, log=log))
 
     def shutdown(self):
         self.server.close()
