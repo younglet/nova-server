@@ -1,6 +1,6 @@
 # NovaServer
 
-[![License](https://img.shields.io/github/license/younglet/nova-server)](https://github.com/younglet/nova-server/blob/main/LICENSE) [![GitHub stars](https://img.shields.io/github/stars/younglet/nova-server.svg)](https://github.com/younglet/nova-server) [![Docs](https://img.shields.io/badge/Docs-nova-server.app-blueviolet.svg)](https://younglet.github.io/nova-server/) ![Size](https://img.shields.io/badge/Size-~42KB-orange.svg)
+[![GitHub stars](https://img.shields.io/github/stars/younglet/nova-server.svg)](https://github.com/younglet/nova-server) [![Docs](https://img.shields.io/badge/Docs-nova-server.app-blueviolet.svg)](https://younglet.github.io/nova-server/) ![Size](https://img.shields.io/badge/Size-~42KB-orange.svg)
 
 > **纯 MicroPython** 异步微型 Web 框架。~42KB 单文件 · 零依赖 · 专为 ESP32 优化。
 
