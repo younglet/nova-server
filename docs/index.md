@@ -4,7 +4,7 @@ layout: home
 hero:
   name: nova-server
   text: ESP32 上的微型 Web 框架
-  tagline: 单文件 35 KB · 内置于 NovaMP · 不用懂 Web 也能用
+  tagline: 单文件 ~42 KB · 零依赖 · 烧 MicroPython 的 ESP32 当 server · v0.2 起纯 MicroPython
   actions:
     - theme: brand
       text: 5 分钟跑起来
