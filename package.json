@@ -13,7 +13,7 @@
   "dependencies": {
     "markdown-it-container": "^4.0.0"
   },
-  "license": "MIT",
+  "license": "CC-BY-NC-4.0",
   "author": "stemstar <https://github.com/younglet>",
   "private": false,
   "keywords": [
