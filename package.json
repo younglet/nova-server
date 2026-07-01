@@ -1,7 +1,7 @@
 {
-  "name": "nova-server-docs",
-  "version": "0.1.0",
-  "description": "Documentation for nova-server (MicroPython web framework for ESP32)",
+  "name": "nova-server",
+  "version": "0.2.0",
+  "description": "MicroPython 异步 Web 框架。单文件 ~42KB · 零依赖 · ESP32 优化。",
   "scripts": {
     "docs:dev": "vitepress dev docs --port 5173",
     "docs:build": "vitepress build docs",
@@ -12,5 +12,23 @@
   },
   "dependencies": {
     "markdown-it-container": "^4.0.0"
+  },
+  "license": "MIT",
+  "author": "stemstar <https://github.com/younglet>",
+  "private": false,
+  "keywords": [
+    "micropython",
+    "esp32",
+    "async",
+    "web-framework",
+    "iot"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/younglet/nova-server.git"
+  },
+  "homepage": "https://younglet.github.io/nova-server/",
+  "bugs": {
+    "url": "https://github.com/younglet/nova-server/issues"
   }
 }

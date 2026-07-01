@@ -7,14 +7,15 @@ export default defineConfig({
   repo: 'https://github.com/younglet/nova-server',
   base,
   title: 'nova-server',
-  description: 'MicroPython 异步 Web 框架 · 专为 NovaMP 2.0 / ESP32 设计',
+  description: 'MicroPython 异步 Web 框架。~42KB 单文件 · 零依赖 · 专为 ESP32 / NovaMP 2.0 优化 · v0.2 起纯 MicroPython。',
   lang: 'zh-CN',
   lastUpdated: true,
   cleanUrls: true,
   ignoreDeadLinks: true,
 
   head: [
-    ['meta', { name: 'theme-color', content: '#3eaf7c' }],
+    ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
+    ['meta', { name: 'theme-color', content: '#10b981' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:title', content: 'nova-server' }],
     ['meta', { property: 'og:description', content: 'ESP32 MicroPython 异步 Web 框架' }],

@@ -14,16 +14,27 @@ node_modules/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 
-# 桌面生成的临时文件
-.DS_Store
-*.log
+# IDE / 编辑器
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# OS 临时
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志 & 密钥
+*.log
 .env
 .env.local
-dist/
-*.tmp
-*.bak
+.env.*.local
 
 # 本地 WiFi 凭据，不入库
 boot.py
+
+# 运行时临时
+*.tmp
+*.bak
+dist/
