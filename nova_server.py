@@ -15,6 +15,36 @@ import time
 import json
 
 
+# MicroPython 没有 inspect 模块，本地实现一个 iscoroutinefunction。
+# CO_COROUTINE = 0x100（与 CPython 一致）
+def _iscoroutinefunction(f):
+    """判断 f 是否是 `async def` 定义的协程函数。
+
+    三路径兼容：
+      1. MicroPython：`async def` 的"函数"对象其实是 generator（`type(f).__name__ == 'generator'`）
+      2. CPython 3.12+：`inspect.CO_COROUTINE` 常量（当前是 128 / 0x80）
+      3. CPython 老版本：硬编码 `0x100`（256）作为兜底
+    """
+    # 1. MicroPython 路径：async def 返回的是 generator 对象
+    if type(f).__name__ == 'generator':
+        return True
+    # 2. CPython 路径：检查 co_flags
+    try:
+        import inspect as _inspect
+        # CO_COROUTINE 在不同 Python 版本中值不同：
+        #   3.11 及更早：0x100 (256)
+        #   3.12+：0x80 (128)
+        co_coroutine = getattr(_inspect, 'CO_COROUTINE', 0x100)
+        if bool(f.__code__.co_flags & co_coroutine):
+            return True
+        # 3. 兜底：位 8（0x100）作 fallback，覆盖老 Python
+        if bool(f.__code__.co_flags & 0x100):
+            return True
+    except (ImportError, AttributeError, TypeError):
+        pass
+    return False
+
+
 # ★ invoke_handler：纯 MicroPython，不再 try/except 兜底 inspect/functools
 def iscoroutine(coro):
     return hasattr(coro, 'send') and hasattr(coro, 'throw')
@@ -754,6 +784,8 @@ class NovaServer:
         self.static_path = static_path
         self.host = host
         self.port = port
+        # 后台周期任务表。每项 = [name, func, interval_ms, is_async, task_obj_or_None]
+        self._tasks = []
         if static_dir:   # None 或 '' 禁用
             self._mount_static(static_dir, static_path)
 
@@ -821,6 +853,106 @@ class NovaServer:
 
     def delete(self, url_pattern):
         return self.route(url_pattern, methods=['DELETE'])
+
+    # ── 后台周期任务 ─────────────────────────────────────
+    # 让不熟悉 asyncio 的用户也能写"循环判断"程序。
+
+    def task(self, interval_ms=50):
+        """装饰器：注册一个周期性后台任务。
+
+        装饰一个普通函数（同步）或 `async def`（异步）后，
+        nova-server 在 `start_server()` 时自动按 `interval_ms`
+        毫秒的间隔反复调用它，直到 server 关闭。
+
+        函数抛异常会被捕获、打印，但不会中断 server 或其他 task。
+
+        用法：
+            @app.task(interval_ms=30)
+            def check_button():
+                if _btn.is_clicked():
+                    _led.switch()
+
+            @app.task(interval_ms=1000)
+            async def read_sensor():
+                await sensor.read()
+                print(sensor.value)
+
+        注意事项：
+            - 同步函数里不要用 `time.sleep(...)`，会阻塞事件循环
+            - 建议 `interval_ms >= 10`
+            - 重名（函数 `__name__` 相同）会抛 ValueError
+        """
+        def decorator(f):
+            self.add_task(f, interval_ms=interval_ms)
+            return f
+        return decorator
+
+    def add_task(self, func, interval_ms=50, name=None):
+        """函数式版本：注册一个周期性后台任务。
+
+        等价于装饰器 `@app.task(interval_ms=interval_ms)`。
+        `name` 参数给 lambda / 匿名函数起名用。
+
+        用法：
+            def check_button():
+                if _btn.is_clicked():
+                    _led.switch()
+            app.add_task(check_button, interval_ms=30)
+
+            app.add_task(lambda: print('tick'), interval_ms=1000, name='tick')
+        """
+        is_async = _iscoroutinefunction(func)
+        func_name = name or getattr(func, '__name__', None) or \
+            'task_{}'.format(len(self._tasks))
+        for existing, *_ in self._tasks:
+            if existing == func_name:
+                raise ValueError(
+                    "Task '{}' already registered".format(func_name))
+        # [name, func, interval_ms, is_async, task_obj_or_None]
+        self._tasks.append([func_name, func, int(interval_ms), is_async, None])
+        return func
+
+    def tasks(self):
+        """只读：列出所有已注册的后台任务。
+
+        返回 list[dict]，每项包含：
+          - name:       函数名
+          - interval_ms: 调用间隔
+          - is_async:    True / False
+          - running:     True / False（start_server 后才变 True）
+        """
+        return [
+            {'name': n, 'interval_ms': iv, 'is_async': ia, 'running': t is not None}
+            for n, _, iv, ia, t in self._tasks
+        ]
+
+    async def _run_task(self, idx):
+        """内部协程：跑第 idx 个 task 直到 server 关闭。
+
+        第一个参数 self 是隐式的；idx 指向 self._tasks[idx]。
+        单独拆成方法是为了在 start_server 里用
+        asyncio.create_task(self._run_task(i)) 启动。
+        """
+        name, func, interval_ms, is_async, _ = self._tasks[idx]
+        print('[task] {} started, every {}ms'.format(name, interval_ms))
+        try:
+            while True:
+                try:
+                    if is_async:
+                        await func()
+                    else:
+                        func()
+                except Exception as e:
+                    # 错误隔离：一个 task 抛异常不影响 server 和其他 task
+                    print('[task] {} error: {}'.format(name, e))
+                # 跨平台 sleep：MicroPython 用 sleep_ms（高精度）；PC Python 退到 sleep
+                try:
+                    await asyncio.sleep_ms(interval_ms)
+                except AttributeError:
+                    await asyncio.sleep(interval_ms / 1000)
+        except asyncio.CancelledError:
+            print('[task] {} cancelled'.format(name))
+            raise
 
     def before_request(self, f):
         self.before_request_handlers.append(f)
@@ -901,6 +1033,10 @@ class NovaServer:
                                                      ssl=ssl)
         except TypeError:
             self.server = await asyncio.start_server(serve, host, port)
+
+        # ★ 启动所有已注册的后台周期任务（@app.task 注册的）
+        for i in range(len(self._tasks)):
+            self._tasks[i][4] = asyncio.create_task(self._run_task(i))
 
         # ★ 启动 banner：总是打，让用户立刻确认 server 在线
         lan_ip = _detect_lan_ip()
