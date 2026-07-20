@@ -432,7 +432,7 @@ class Response:
         'svg': 'image/svg+xml',
     }
 
-    send_file_buffer_size = 1024
+    send_file_buffer_size = 4096
 
     default_content_type = 'text/plain'
 
@@ -505,8 +505,10 @@ class Response:
         """
         reason = self.reason if self.reason is not None else \
             ('OK' if self.status_code == 200 else 'N/A')
-        parts = ['HTTP/1.0 {code} {reason}\r\n'.format(
+        parts = ['HTTP/1.1 {code} {reason}\r\n'.format(
             code=self.status_code, reason=reason).encode()]
+        if self.status_code != 304:
+            parts.append(b'Connection: keep-alive\r\n')
         for header, value in self.headers.items():
             values = value if isinstance(value, list) else [value]
             for v in values:
@@ -600,10 +602,11 @@ class Response:
                     except StopIteration:
                         await self.aclose()
                         raise StopAsyncIteration
-                buf = response.body.read(response.send_file_buffer_size)
+                bs = getattr(response, 'send_file_buffer_size', Response.send_file_buffer_size)
+                buf = response.body.read(bs)
                 if iscoroutine(buf):
                     buf = await buf
-                if len(buf) < response.send_file_buffer_size:
+                if len(buf) < bs:
                     self.i = self.ITER_NO_BODY
                 return buf
 
@@ -624,7 +627,7 @@ class Response:
     @classmethod
     def send_file(cls, filename, status_code=200, content_type=None,
                   stream=None, max_age=None, compressed=False,
-                  file_extension=''):
+                  file_extension='', buffer_size=None):
         if content_type is None:
             if compressed and filename.endswith('.gz'):
                 ext = filename[:-3].split('.')[-1]
@@ -646,7 +649,10 @@ class Response:
                 if isinstance(compressed, str) else 'gzip'
 
         f = stream or open(filename + file_extension, 'rb')
-        return cls(body=f, status_code=status_code, headers=headers)
+        res = cls(body=f, status_code=status_code, headers=headers)
+        if buffer_size is not None:
+            res.send_file_buffer_size = buffer_size
+        return res
 
 
 # ════════════════════════════════════════════════════════════════
@@ -934,7 +940,7 @@ class NovaServer:
         asyncio.create_task(self._run_task(i)) 启动。
         """
         name, func, interval_ms, is_async, _ = self._tasks[idx]
-        print('[task] {} started, every {}ms'.format(name, interval_ms))
+        print('[task] {}'.format(name))
         try:
             while True:
                 try:
@@ -1022,11 +1028,55 @@ class NovaServer:
                 writer.awrite = MethodType(awrite, writer)
                 writer.aclose = MethodType(aclose, writer)
 
-            await self.handle_request(reader, writer)
+            KEEPALIVE_TIMEOUT = 5  # 空闲 5 秒后关闭连接
+            while True:
+                start_ms = time.ticks_ms()
+                req = None
+                try:
+                    req = await asyncio.wait_for(
+                        Request.create(self, reader, writer,
+                                       writer.get_extra_info('peername')),
+                        timeout=KEEPALIVE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    break
+                except OSError as exc:
+                    if exc.errno in MUTED_SOCKET_ERRORS:
+                        break
+                    raise
+                except Exception:
+                    break
 
-        if self.debug:
-            print('Starting async server on {host}:{port}...'.format(
-                host=host, port=port))
+                if req is None:
+                    break
+
+                res = await self.dispatch_request(req)
+                try:
+                    if res != Response.already_handled:
+                        await res.write(writer)
+                except OSError as exc:
+                    if exc.errno not in MUTED_SOCKET_ERRORS:
+                        raise
+                    break
+                except Exception:
+                    break
+
+                # ★ 请求日志：debug=True 才打
+                if self.debug:
+                    try:
+                        elapsed_ms = time.ticks_diff(time.ticks_ms(), start_ms)
+                        ts = _format_hms()
+                        print('[{}] {} {} {} ({}ms)'.format(
+                            ts, req.method, req.path, res.status_code, elapsed_ms))
+                    except Exception:
+                        pass
+
+                if req.http_version == '1.0':
+                    break
+
+            try:
+                await writer.aclose()
+            except:
+                pass
 
         try:
             self.server = await asyncio.start_server(serve, host, port,
@@ -1038,16 +1088,10 @@ class NovaServer:
         for i in range(len(self._tasks)):
             self._tasks[i][4] = asyncio.create_task(self._run_task(i))
 
-        # ★ 启动 banner：总是打，让用户立刻确认 server 在线
+        # ★ 启动 banner
         lan_ip = _detect_lan_ip()
-        if lan_ip and lan_ip != host:
-            print('NovaServer running on http://{lan_ip}:{port}/ (debug={debug})'.format(
-                lan_ip=lan_ip, port=port, debug=self.debug))
-            print('  (listening on {host}:{port}, reachable from LAN at {lan_ip}:{port})'.format(
-                host=host, port=port, lan_ip=lan_ip))
-        else:
-            print('NovaServer running on http://{host}:{port}/ (debug={debug})'.format(
-                host=host, port=port, debug=self.debug))
+        print('NovaServer running on http://{ip}:{port}/'.format(
+            ip=lan_ip or host, port=port))
 
         while True:
             try:
