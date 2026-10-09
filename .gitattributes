@@ -1,0 +1,6 @@
+# 强制 Unix 行尾（Windows 上 core.autocrlf=true 会把源码写成 CRLF，
+# 而 nova_server.py 曾被 git 判为 -text 导致整文件 diff 噪音，这里显式声明）
+*.py       text eol=lf
+*.sh       text eol=lf
+*.md       text eol=lf
+*.json     text eol=lf

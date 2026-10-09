@@ -825,6 +825,31 @@ class NovaServer:
             (['GET'], URLPattern(url_prefix + '/'),
              _serve_index, '', None))
 
+    def _mount_root_index(self):
+        """懒挂载：应用自己没有写 '/' 时，把根路径指向静态目录的 index.html。
+
+        为什么放在启动时（而不是 __init__）：
+          路由是"先注册先命中"，装饰器要等用户代码跑完才登记；
+          如果在 __init__ 里挂 '/'，就会抢在用户自己的 '/' 前面。
+          所以等到 start_server() 再看一眼：用户没写，才轮到我们兜底。
+        应用自己写了 '/' 就不挂 —— 根路径归应用（与 Flask/Django 一致）。
+        """
+        if not self.static_dir:
+            return
+        for route_methods, route_pattern, _handler, _prefix, _sub in self.url_map:
+            if route_pattern.url_pattern == '/':
+                return
+        static_root = self.static_dir.rstrip('/') + '/'
+
+        async def _serve_root_index(req):
+            try:
+                return send_file(static_root + 'index.html', max_age=3600)
+            except OSError:
+                return {'error': 'index.html not found'}, 404
+
+        self.url_map.append(
+            (['GET'], URLPattern('/'), _serve_root_index, '', None))
+
     def _maybe_gc(self):
         """请求处理前后调用。auto_gc=False 时直接返回，不调 import gc。"""
         if not self.auto_gc or self.gc_threshold <= 0:
@@ -1012,6 +1037,8 @@ class NovaServer:
             port = self.port
         if debug is not None:
             self.debug = bool(debug)
+
+        self._mount_root_index()   # ★ 懒挂载：此刻用户路由已全部登记
 
         async def serve(reader, writer):
             if not hasattr(writer, 'awrite'):

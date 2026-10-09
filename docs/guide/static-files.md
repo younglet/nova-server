@@ -96,6 +96,8 @@ async function fetchData() {
 
 否则访问 `/index.html` 也会被你注册的 handler 处理，可能冲突。
 
+> ⚠️ 但**不写 `/` 也不会 404**：启动时框架会检查一次 —— 应用自己没注册 `/`，就把根路径指向 `{static_dir}/index.html`（等价于 nginx 的 `index index.html`）。**你自己写了 `/` 就轮不到它**，根路径永远归应用。
+
 ## 自动 Content-Type
 
 `send_file` 根据扩展名自动设置：

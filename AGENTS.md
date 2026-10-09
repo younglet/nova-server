@@ -158,6 +158,8 @@ app = NovaServer(static_dir='/www') # 换磁盘路径
 用户不需要手写 `_is_safe` 、`try/except OSError`、`send_file(max_age=...)`。
 直接 `NovaServer()` 就拿到防穿越的静态文件服务。
 
+另外，**启动时**会做一次「懒挂载」：如果应用自己没有注册 `/`，就把根路径指向 `{static_dir}/index.html` —— 静态站点直接打 `http://ip/` 就能开。应用自己写了 `/` 则完全不干预，根路径永远归应用。
+
 ## 改动会影响什么
 
 | 改这个 | 也会影响 |
